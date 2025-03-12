@@ -1,0 +1,72 @@
+/**
+ * Admin CSS for GA4 to Nutshell Integration
+ */
+
+/* Form layout */
+.form-table th {
+    width: 200px;
+}
+
+/* Mapping table */
+#ga4-to-nutshell-mapping-container {
+    margin-bottom: 15px;
+}
+
+#ga4-to-nutshell-mapping-container table {
+    width: 100%;
+    margin-top: 10px;
+    border-collapse: collapse;
+}
+
+#ga4-to-nutshell-mapping-container th, 
+#ga4-to-nutshell-mapping-container td {
+    padding: 8px;
+}
+
+#ga4-to-nutshell-mapping-container td select {
+    width: 100%;
+    max-width: 400px;
+}
+
+.ga4-to-nutshell-remove-mapping {
+    color: #a00;
+}
+
+/* Test connection section */
+.ga4-to-nutshell-test-connection {
+    margin: 20px 0;
+    padding: 15px;
+    background: #f8f8f8;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+#ga4-to-nutshell-test-result {
+    margin-top: 10px;
+    padding: 10px;
+}
+
+#ga4-to-nutshell-test-result p.success {
+    color: #46b450;
+    font-weight: bold;
+}
+
+#ga4-to-nutshell-test-result p.error {
+    color: #dc3232;
+    font-weight: bold;
+}
+
+/* General styling */
+.error {
+    color: #dc3232;
+}
+
+.success {
+    color: #46b450;
+}
+
+/* Add spacing between sections */
+.form-table + h2,
+.form-table + .ga4-to-nutshell-test-connection {
+    margin-top: 30px;
+}
