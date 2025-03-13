@@ -40,6 +40,16 @@ function ga4_to_nutshell_validate_settings($input) {
     // Debug mode
     $output['debug_mode'] = isset($input['debug_mode']) ? 1 : 0;
     
+    // Form types and event triggers
+    $output['enabled_form_types'] = isset($input['enabled_form_types']) && is_array($input['enabled_form_types']) ? 
+        array_map('sanitize_text_field', $input['enabled_form_types']) : ['ninja_forms'];
+    
+    $output['event_triggers'] = isset($input['event_triggers']) && is_array($input['event_triggers']) ? 
+        array_map('sanitize_text_field', $input['event_triggers']) : ['book_a_demo', 'nfFormSubmitResponse'];
+    
+    $output['custom_event_trigger'] = isset($input['custom_event_trigger']) ? 
+        sanitize_text_field($input['custom_event_trigger']) : '';
+    
     // Process form-to-user mappings
     $output['form_user_mappings'] = array();
     
@@ -242,26 +252,47 @@ function ga4_to_nutshell_init_logging() {
 add_action('plugins_loaded', 'ga4_to_nutshell_init_logging');
 
 /**
- * Log debug information to file
+ * Enhanced logging function with different log levels
  *
  * @param string $message Message to log
  * @param mixed $data Optional data to include
- * @param string $level Log level (info, warning, error)
+ * @param string $level Log level (debug, info, warning, error)
  */
 function ga4_to_nutshell_log($message, $data = null, $level = 'info') {
-    // Always log for debugging during development
-    $force_logging = true;
+    // Get settings
+    $settings = get_option('ga4_to_nutshell_settings', []);
     
-    if (!$force_logging && (!defined('WP_DEBUG') || !WP_DEBUG)) {
+    // Check if debug mode is enabled
+    $debug_mode = isset($settings['debug_mode']) && $settings['debug_mode'];
+    
+    // Determine if we should log based on level and debug mode
+    $should_log = $debug_mode || $level === 'error' || $level === 'warning';
+    
+    // If debug is not enabled and this is not an error/warning, skip logging
+    if (!$should_log) {
+        return;
+    }
+    
+    // Only log debug level messages if debug_mode is enabled
+    if ($level === 'debug' && !$debug_mode) {
         return;
     }
     
     $timestamp = current_time('mysql');
     $formatted_message = "[$timestamp] [$level] $message";
     
+    // Format data if provided
     if ($data !== null) {
         if (is_array($data) || is_object($data)) {
-            $formatted_message .= ' ' . print_r($data, true);
+            // Limit large data dumps for better readability
+            $data_string = print_r($data, true);
+            
+            // If data is very large, truncate it
+            if (strlen($data_string) > 2000 && !$debug_mode) {
+                $data_string = substr($data_string, 0, 2000) . '... [truncated]';
+            }
+            
+            $formatted_message .= ' ' . $data_string;
         } else {
             $formatted_message .= ' ' . $data;
         }
@@ -273,6 +304,12 @@ function ga4_to_nutshell_log($message, $data = null, $level = 'info') {
     // Also log to a specific file for this plugin
     $log_file = WP_CONTENT_DIR . '/ga4-to-nutshell-debug.log';
     error_log($formatted_message . PHP_EOL, 3, $log_file);
+    
+    // For errors, log to a separate file for easier troubleshooting
+    if ($level === 'error') {
+        $error_log_file = WP_CONTENT_DIR . '/ga4-to-nutshell-errors.log';
+        error_log($formatted_message . PHP_EOL, 3, $error_log_file);
+    }
 }
 /**
  * Add logs tab to the settings page
@@ -343,7 +380,166 @@ function ga4_to_nutshell_display_logs() {
     echo '</div>';
     echo '</div>';
 }
+/**
+ * Handle API errors more effectively
+ * 
+ * @param WP_Error|array $response The response from wp_remote_request
+ * @param string $context Context description of what we were trying to do
+ * @param array $request_data The data that was sent in the request
+ * @return array|WP_Error Parsed response or WP_Error
+ */
+function ga4_to_nutshell_handle_api_response($response, $context, $request_data = []) {
+    // Check for WP_Error first
+    if (is_wp_error($response)) {
+        $error_message = $response->get_error_message();
+        ga4_to_nutshell_log("API Error in $context", $error_message, 'error');
+        
+        // Log the request data for debugging
+        ga4_to_nutshell_log("Request data for failed $context", $request_data, 'debug');
+        
+        return new WP_Error('api_request_failed', "API request failed ($context): $error_message");
+    }
+    
+    // Check HTTP status code
+    $status_code = wp_remote_retrieve_response_code($response);
+    if ($status_code < 200 || $status_code >= 300) {
+        $error_message = "HTTP error $status_code for $context";
+        ga4_to_nutshell_log($error_message, wp_remote_retrieve_body($response), 'error');
+        
+        return new WP_Error('api_http_error', $error_message);
+    }
+    
+    // Try to parse the response body
+    $body = wp_remote_retrieve_body($response);
+    $parsed_body = json_decode($body, true);
+    
+    // Check for JSON parsing errors
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        $error_message = "Invalid JSON response from $context: " . json_last_error_msg();
+        ga4_to_nutshell_log($error_message, $body, 'error');
+        
+        return new WP_Error('api_invalid_json', $error_message);
+    }
+    
+    // Check for API error in response
+    if (isset($parsed_body['error'])) {
+        $error_info = $parsed_body['error'];
+        $error_message = isset($error_info['message']) ? $error_info['message'] : 'Unknown API error';
+        $error_code = isset($error_info['code']) ? $error_info['code'] : 'api_error';
+        $error_data = isset($error_info['data']) ? $error_info['data'] : null;
+        
+        ga4_to_nutshell_log("API Error in $context", [
+            'message' => $error_message,
+            'code' => $error_code,
+            'data' => $error_data
+        ], 'error');
+        
+        // Provide recovery suggestions based on error
+        $recovery_suggestion = ga4_to_nutshell_get_error_recovery_suggestion($error_message, $error_code, $context);
+        
+        return new WP_Error($error_code, "$error_message. $recovery_suggestion", $error_data);
+    }
+    
+    // Success! Log response for debugging if needed
+    ga4_to_nutshell_log("Successful API response for $context", $parsed_body, 'debug');
+    
+    return $parsed_body;
+}
+/**
+ * Get recovery suggestion based on error message and context
+ * 
+ * @param string $error_message The error message from the API
+ * @param string $error_code The error code if available
+ * @param string $context The context of the API request
+ * @return string A suggestion for recovery
+ */
+function ga4_to_nutshell_get_error_recovery_suggestion($error_message, $error_code, $context) {
+    // Default suggestion
+    $suggestion = "Please check your request and try again.";
+    
+    // Authentication errors
+    if (strpos($error_message, 'authentication') !== false || 
+        strpos($error_message, 'credentials') !== false || 
+        strpos($error_message, 'unauthorized') !== false || 
+        $error_code === 'auth_error') {
+        
+        return "Please verify your Nutshell API credentials in the plugin settings.";
+    }
+    
+    // Permission errors
+    if (strpos($error_message, 'permission') !== false || 
+        strpos($error_message, 'not allowed') !== false) {
+        
+        return "Your Nutshell API user may not have permission to perform this action. Please contact your Nutshell administrator.";
+    }
+    
+    // Missing field errors
+    if (strpos($error_message, 'missing') !== false || 
+        strpos($error_message, 'required') !== false) {
+        
+        return "A required field is missing. Please check your form mappings and make sure all required Nutshell fields are mapped to form fields.";
+    }
+    
+    // Validation errors
+    if (strpos($error_message, 'validation') !== false) {
+        return "There was a validation error with your data. Please check that your form data matches what Nutshell expects.";
+    }
+    
+    // Entity not found
+    if (strpos($error_message, 'not found') !== false) {
+        if (strpos($context, 'contact') !== false) {
+            return "The contact could not be found. Make sure your form collects valid contact information.";
+        } else if (strpos($context, 'account') !== false) {
+            return "The company/account could not be found. Make sure your form collects valid company information.";
+        } else if (strpos($context, 'user') !== false) {
+            return "The assigned user could not be found. Check your form-to-user mappings in the plugin settings.";
+        }
+    }
+    
+    // Rate limiting or API quotas
+    if (strpos($error_message, 'rate limit') !== false || 
+        strpos($error_message, 'quota') !== false || 
+        $error_code === 'too_many_requests') {
+        
+        return "You have reached the Nutshell API rate limit. Please wait a few minutes and try again.";
+    }
+    
+    // Context-specific suggestions
+    if (strpos($context, 'creating lead') !== false) {
+        return "There was an error creating the lead. Make sure your form collects all required information and that your form mappings are correct.";
+    } else if (strpos($context, 'creating contact') !== false) {
+        return "There was an error creating the contact. Make sure your form collects valid contact information such as name and email.";
+    } else if (strpos($context, 'creating account') !== false) {
+        return "There was an error creating the company/account. Make sure your form collects valid company information.";
+    }
+    
+    return $suggestion;
+}
 
+/**
+ * Display admin notice for error during form submission
+ * 
+ * @param WP_Error $error The error object
+ */
+function ga4_to_nutshell_admin_notice_error($error) {
+    // Only show to admins
+    if (!current_user_can('manage_options')) {
+        return;
+    }
+    
+    $error_message = $error->get_error_message();
+    $error_code = $error->get_error_code();
+    
+    // Add to admin notices
+    add_action('admin_notices', function() use ($error_message, $error_code) {
+        ?>
+        <div class="notice notice-error is-dismissible">
+            <p><strong>GA4 to Nutshell Error:</strong> <?php echo esc_html($error_message); ?> (Code: <?php echo esc_html($error_code); ?>)</p>
+            <p>Check the <a href="<?php echo admin_url('options-general.php?page=ga4-to-nutshell&tab=logs'); ?>">error logs</a> for more details.</p>
+        </div>
+        <?php
+    });
+}
 /**
  * Display test tools
  */

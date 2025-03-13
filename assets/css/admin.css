@@ -70,3 +70,33 @@
 .form-table + .ga4-to-nutshell-test-connection {
     margin-top: 30px;
 }
+
+.form-types-container,
+.event-triggers-container {
+    margin-bottom: 10px;
+}
+
+.form-type-option,
+.event-trigger-option {
+    margin-bottom: 8px;
+}
+
+.not-installed {
+    color: #999;
+    font-style: italic;
+}
+
+/* Form selection in field mapping */
+.form-selector-container {
+    margin-bottom: 15px;
+}
+
+/* Form mapping table */
+.form-mapping-table {
+    margin-bottom: 20px;
+}
+
+.form-mapping-table th,
+.form-mapping-table td {
+    padding: 8px;
+}

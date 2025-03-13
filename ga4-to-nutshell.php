@@ -4,7 +4,7 @@
  * Plugin Name: GA4 to Nutshell CRM Integration
  * Plugin URI: https://plusinfinit.com
  * Description: Integrates GA4 datalayer events with Nutshell CRM, focusing on Ninja Forms submissions.
- * Version: 1.0.0
+ * Version: 1.0.2
  * Author: cosmixs
  * Author URI: https://plusinfinit.com
  * Text Domain: ga4-to-nutshell
@@ -17,7 +17,6 @@ if (!defined('ABSPATH')) {
 
 class GA4_To_Nutshell
 {
-
     // Plugin version
     const VERSION = '1.0.0';
 
@@ -101,9 +100,57 @@ class GA4_To_Nutshell
         add_action('wp_ajax_ga4_to_nutshell_process_data', [$this, 'process_ajax_data']);
         add_action('wp_ajax_nopriv_ga4_to_nutshell_process_data', [$this, 'process_ajax_data']);
 
-        // Direct Ninja Forms integration - This is the key addition
-        if (class_exists('Ninja_Forms')) {
-            add_action('ninja_forms_after_submission', [$this, 'process_ninja_form_submission'], 10, 1);
+        // Get enabled form types
+        $enabled_form_types = isset($this->settings['enabled_form_types']) ? $this->settings['enabled_form_types'] : ['ninja_forms'];
+
+        // Add form-specific integrations based on enabled types
+        foreach ($enabled_form_types as $form_type) {
+            $this->add_form_specific_integrations($form_type);
+        }
+    }
+
+    /**
+     * Add form-specific integrations based on form type
+     *
+     * @param string $form_type The form type to add integrations for
+     */
+    private function add_form_specific_integrations($form_type)
+    {
+        switch ($form_type) {
+            case 'ninja_forms':
+                if (class_exists('Ninja_Forms')) {
+                    add_action('ninja_forms_after_submission', [$this, 'process_ninja_form_submission'], 10, 1);
+                    ga4_to_nutshell_log('Added Ninja Forms integration hooks', null, 'info');
+                }
+                break;
+
+            case 'contact_form_7':
+                if (class_exists('WPCF7')) {
+                    add_action('wpcf7_mail_sent', [$this, 'process_cf7_submission'], 10, 1);
+                    ga4_to_nutshell_log('Added Contact Form 7 integration hooks', null, 'info');
+                }
+                break;
+
+            case 'gravity_forms':
+                if (class_exists('GFForms')) {
+                    add_action('gform_after_submission', [$this, 'process_gravity_form_submission'], 10, 2);
+                    ga4_to_nutshell_log('Added Gravity Forms integration hooks', null, 'info');
+                }
+                break;
+
+            case 'wpforms':
+                if (class_exists('WPForms')) {
+                    add_action('wpforms_process_complete', [$this, 'process_wpforms_submission'], 10, 4);
+                    ga4_to_nutshell_log('Added WPForms integration hooks', null, 'info');
+                }
+                break;
+
+            case 'formidable':
+                if (class_exists('FrmForm')) {
+                    add_action('frm_after_create_entry', [$this, 'process_formidable_submission'], 30, 2);
+                    ga4_to_nutshell_log('Added Formidable Forms integration hooks', null, 'info');
+                }
+                break;
         }
     }
 
@@ -134,7 +181,6 @@ class GA4_To_Nutshell
             [$this, 'render_api_section_description'],
             'ga4-to-nutshell'
         );
-
 
         add_settings_field(
             'nutshell_username',
@@ -208,6 +254,40 @@ class GA4_To_Nutshell
                 'description' => __('Log debug information to the browser console', 'ga4-to-nutshell')
             ]
         );
+        add_settings_section(
+            'ga4_to_nutshell_integrations',
+            __('Form Integrations & Triggers', 'ga4-to-nutshell'),
+            [$this, 'render_integrations_section_description'],
+            'ga4-to-nutshell'
+        );
+
+        add_settings_field(
+            'enabled_form_types',
+            __('Enabled Form Types', 'ga4-to-nutshell'),
+            [$this, 'render_form_types_field'],
+            'ga4-to-nutshell',
+            'ga4_to_nutshell_integrations'
+        );
+
+        add_settings_field(
+            'event_triggers',
+            __('Event Triggers', 'ga4-to-nutshell'),
+            [$this, 'render_event_triggers_field'],
+            'ga4-to-nutshell',
+            'ga4_to_nutshell_integrations'
+        );
+
+        add_settings_field(
+            'custom_event_trigger',
+            __('Custom Event Trigger', 'ga4-to-nutshell'),
+            [$this, 'render_text_field'],
+            'ga4-to-nutshell',
+            'ga4_to_nutshell_integrations',
+            [
+                'field' => 'custom_event_trigger',
+                'description' => __('Add a custom event name that should trigger lead creation (optional)', 'ga4-to-nutshell')
+            ]
+        );
     }
 
     /**
@@ -225,6 +305,7 @@ class GA4_To_Nutshell
     {
         echo '<p>' . __('Map each Ninja Form to a Nutshell CRM user to assign leads appropriately.', 'ga4-to-nutshell') . '</p>';
     }
+
     /**
      * Render field mapping section description
      * - Add this as a new method in the class
@@ -251,16 +332,31 @@ class GA4_To_Nutshell
         ];
 
         echo '<div id="ga4-to-nutshell-field-mapping-container">';
-        echo '<p>' . __('Select a Ninja Form to configure field mappings:', 'ga4-to-nutshell') . '</p>';
+        echo '<p>' . __('Select a form to configure field mappings:', 'ga4-to-nutshell') . '</p>';
 
-        echo '<select id="ninja-form-selector" class="widefat">';
-        echo '<option value="">' . __('-- Select a Form --', 'ga4-to-nutshell') . '</option>';
+        echo '<div class="form-selector-container">';
+        echo '<select id="form-type-selector" class="widefat">';
+        echo '<option value="">' . __('-- Select Form Type --', 'ga4-to-nutshell') . '</option>';
+
+        // Get available form types
+        $available_form_types = $this->get_available_form_types();
+        foreach ($available_form_types as $type => $data) {
+            if ($data['available']) {
+                echo '<option value="' . esc_attr($type) . '">' . esc_html($data['label']) . '</option>';
+            }
+        }
+
         echo '</select>';
 
-        echo '<div id="field-mapping-content" style="margin-top: 15px;">';
-        echo '<p>' . __('Loading...', 'ga4-to-nutshell') . '</p>';
+        echo '<select id="form-selector" class="widefat" style="margin-top: 10px;">';
+        echo '<option value="">' . __('-- Select a Form --', 'ga4-to-nutshell') . '</option>';
+        echo '</select>';
         echo '</div>';
-        // At the end of the render_field_mapping method, add:
+
+        echo '<div id="field-mapping-content" style="margin-top: 15px;">';
+        echo '<p>' . __('Please select a form type and form to see available fields.', 'ga4-to-nutshell') . '</p>';
+        echo '</div>';
+
         echo '<div class="debug-tools" style="margin-top: 15px; padding: 10px; background: #f8f8f8; border: 1px solid #ddd;">';
         echo '<button type="button" class="button" id="debug-field-mappings">Debug Field Mappings</button>';
         echo '<div id="debug-output" style="margin-top: 10px; white-space: pre-wrap;"></div>';
@@ -268,34 +364,35 @@ class GA4_To_Nutshell
         echo '</div>';
 
         // Template for field mapping table
-?>
+        ?>
         <script type="text/template" id="field-mapping-template">
             <table class="widefat field-mapping-table">
-            <thead>
-                <tr>
-                    <th><?php _e('Nutshell Field', 'ga4-to-nutshell'); ?></th>
-                    <th><?php _e('Ninja Form Field', 'ga4-to-nutshell'); ?></th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($nutshell_fields as $field_key => $field_label) : ?>
-                <tr>
-                    <td><?php echo esc_html($field_label); ?></td>
-                    <td>
-                        <select name="ga4_to_nutshell_settings[field_mappings][{{formId}}][<?php echo $field_key; ?>]" class="widefat">
-                            <option value=""><?php _e('-- Not Mapped --', 'ga4-to-nutshell'); ?></option>
-                            {{#formFields}}
-                            <option value="{{id}}" {{#selected}}selected="selected"{{/selected}}>{{label}}</option>
-                            {{/formFields}}
-                        </select>
-                    </td>
-                </tr>
-                <?php endforeach; ?>
-            </tbody>
-        </table>
-    </script>
-<?php
+                <thead>
+                    <tr>
+                        <th><?php _e('Nutshell Field', 'ga4-to-nutshell'); ?></th>
+                        <th><?php _e('Form Field', 'ga4-to-nutshell'); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php foreach ($nutshell_fields as $field_key => $field_label): ?>
+                    <tr>
+                        <td><?php echo esc_html($field_label); ?></td>
+                        <td>
+                            <select name="ga4_to_nutshell_settings[field_mappings][{{formId}}][<?php echo $field_key; ?>]" class="widefat">
+                                <option value=""><?php _e('-- Not Mapped --', 'ga4-to-nutshell'); ?></option>
+                                {{#formFields}}
+                                <option value="{{id}}" {{#selected}}selected="selected"{{/selected}}>{{label}} ({{type}})</option>
+                                {{/formFields}}
+                            </select>
+                        </td>
+                    </tr>
+                    <?php endforeach; ?>
+                </tbody>
+            </table>
+        </script>
+        <?php
     }
+
     /**
      * Render debug section description
      */
@@ -341,10 +438,53 @@ class GA4_To_Nutshell
     public function render_form_user_mapping()
     {
         echo '<div id="ga4-to-nutshell-mapping-container">';
-        echo '<p>' . __('Loading Ninja Forms and Nutshell users...', 'ga4-to-nutshell') . '</p>';
+        echo '<p>' . __('Loading forms and Nutshell users...', 'ga4-to-nutshell') . '</p>';
         echo '</div>';
 
         echo '<button type="button" class="button" id="ga4-to-nutshell-add-mapping">' . __('Add Mapping', 'ga4-to-nutshell') . '</button>';
+
+        // Add template for mapping UI
+        ?>
+        <script type="text/template" id="form-mapping-template">
+            <table class="widefat form-mapping-table">
+                <thead>
+                    <tr>
+                        <th><?php _e('Form', 'ga4-to-nutshell'); ?></th>
+                        <th><?php _e('Form Type', 'ga4-to-nutshell'); ?></th>
+                        <th><?php _e('Nutshell User', 'ga4-to-nutshell'); ?></th>
+                        <th><?php _e('Actions', 'ga4-to-nutshell'); ?></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{#mappings}}
+                    <tr>
+                        <td>
+                            <select name="ga4_to_nutshell_settings[form_user_mappings][{{index}}][form_id]" class="form-select">
+                                <option value="">-- <?php _e('Select Form', 'ga4-to-nutshell'); ?> --</option>
+                                {{#forms}}
+                                <option value="{{id}}" data-form-type="{{type}}" {{#selected}}selected="selected"{{/selected}}>{{title}} ({{plugin}})</option>
+                                {{/forms}}
+                            </select>
+                            <input type="hidden" name="ga4_to_nutshell_settings[form_user_mappings][{{index}}][form_type]" value="{{form_type}}" class="form-type-input">
+                        </td>
+                        <td>{{form_type_label}}</td>
+                        <td>
+                            <select name="ga4_to_nutshell_settings[form_user_mappings][{{index}}][user_id]" class="user-select">
+                                <option value="">-- <?php _e('Select User', 'ga4-to-nutshell'); ?> --</option>
+                                {{#users}}
+                                <option value="{{id}}" {{#selected}}selected="selected"{{/selected}}>{{name}}</option>
+                                {{/users}}
+                            </select>
+                        </td>
+                        <td>
+                            <a href="#" class="ga4-to-nutshell-remove-mapping"><?php _e('Remove', 'ga4-to-nutshell'); ?></a>
+                        </td>
+                    </tr>
+                    {{/mappings}}
+                </tbody>
+            </table>
+        </script>
+        <?php
     }
 
     /**
@@ -381,7 +521,7 @@ class GA4_To_Nutshell
                 }
                 break;
 
-            default: // 'settings' tab or any other
+            default:  // 'settings' tab or any other
                 echo '<form action="options.php" method="post">';
                 settings_fields('ga4_to_nutshell_settings');
                 do_settings_sections('ga4-to-nutshell');
@@ -399,6 +539,118 @@ class GA4_To_Nutshell
         }
 
         echo '</div>';
+    }
+
+    // Add these methods to the GA4_To_Nutshell class:
+
+    /**
+     * Render integrations section description
+     */
+    public function render_integrations_section_description()
+    {
+        echo '<p>' . __('Configure which form plugins to integrate with and which events should trigger lead creation.', 'ga4-to-nutshell') . '</p>';
+    }
+
+    /**
+     * Render form types field
+     */
+    public function render_form_types_field()
+    {
+        $available_form_types = $this->get_available_form_types();
+        $enabled_form_types = isset($this->settings['enabled_form_types']) ? $this->settings['enabled_form_types'] : ['ninja_forms'];
+
+        echo '<div class="form-types-container">';
+
+        foreach ($available_form_types as $type => $label) {
+            $checked = in_array($type, $enabled_form_types) ? 'checked' : '';
+            $disabled = $type === 'ninja_forms' && !$available_form_types['ninja_forms']['available'] ? 'disabled' : '';
+
+            echo '<div class="form-type-option">';
+            echo '<input type="checkbox" id="form_type_' . esc_attr($type) . '" 
+                     name="ga4_to_nutshell_settings[enabled_form_types][]" 
+                     value="' . esc_attr($type) . '" ' . $checked . ' ' . $disabled . '>';
+
+            echo '<label for="form_type_' . esc_attr($type) . '">' . esc_html($label['label']);
+
+            if (!$label['available']) {
+                echo ' <span class="not-installed">(' . __('Not Installed', 'ga4-to-nutshell') . ')</span>';
+            }
+
+            echo '</label>';
+            echo '</div>';
+        }
+
+        echo '</div>';
+        echo '<p class="description">' . __('Select which form types to integrate with Nutshell CRM.', 'ga4-to-nutshell') . '</p>';
+    }
+
+    /**
+     * Render event triggers field
+     */
+    public function render_event_triggers_field()
+    {
+        $default_triggers = [
+            'book_a_demo' => __('Book a Demo Event', 'ga4-to-nutshell'),
+            'nfFormSubmitResponse' => __('Ninja Forms Submission', 'ga4-to-nutshell'),
+            'form_submission' => __('Generic Form Submission', 'ga4-to-nutshell'),
+            'contact_form_submitted' => __('Contact Form Submission', 'ga4-to-nutshell')
+        ];
+
+        $enabled_triggers = isset($this->settings['event_triggers']) ? $this->settings['event_triggers'] : ['book_a_demo', 'nfFormSubmitResponse'];
+
+        echo '<div class="event-triggers-container">';
+
+        foreach ($default_triggers as $trigger => $label) {
+            $checked = in_array($trigger, $enabled_triggers) ? 'checked' : '';
+
+            echo '<div class="event-trigger-option">';
+            echo '<input type="checkbox" id="event_trigger_' . esc_attr($trigger) . '" 
+                     name="ga4_to_nutshell_settings[event_triggers][]" 
+                     value="' . esc_attr($trigger) . '" ' . $checked . '>';
+
+            echo '<label for="event_trigger_' . esc_attr($trigger) . '">' . esc_html($label) . '</label>';
+            echo '</div>';
+        }
+
+        echo '</div>';
+        echo '<p class="description">' . __('Select which events should trigger lead creation in Nutshell CRM.', 'ga4-to-nutshell') . '</p>';
+    }
+
+    /**
+     * Get available form types
+     * This detects which form plugins are installed and active
+     */
+    private function get_available_form_types()
+    {
+        $form_types = [
+            'ninja_forms' => [
+                'label' => __('Ninja Forms', 'ga4-to-nutshell'),
+                'available' => class_exists('Ninja_Forms'),
+                'class' => 'Ninja_Forms'
+            ],
+            'contact_form_7' => [
+                'label' => __('Contact Form 7', 'ga4-to-nutshell'),
+                'available' => class_exists('WPCF7'),
+                'class' => 'WPCF7'
+            ],
+            'gravity_forms' => [
+                'label' => __('Gravity Forms', 'ga4-to-nutshell'),
+                'available' => class_exists('GFForms'),
+                'class' => 'GFForms'
+            ],
+            'wpforms' => [
+                'label' => __('WPForms', 'ga4-to-nutshell'),
+                'available' => class_exists('WPForms'),
+                'class' => 'WPForms'
+            ],
+            'formidable' => [
+                'label' => __('Formidable Forms', 'ga4-to-nutshell'),
+                'available' => class_exists('FrmForm'),
+                'class' => 'FrmForm'
+            ]
+        ];
+
+        return $form_types;
     }
 
     /**
@@ -449,19 +701,331 @@ class GA4_To_Nutshell
             GA4_TO_NUTSHELL_VERSION,
             true
         );
+        // Get event triggers
+        $event_triggers = isset($this->settings['event_triggers']) ? $this->settings['event_triggers'] : ['book_a_demo', 'nfFormSubmitResponse'];
 
+        // Add custom event trigger if set
+        if (!empty($this->settings['custom_event_trigger'])) {
+            $event_triggers[] = $this->settings['custom_event_trigger'];
+        }
         // Pass settings to JavaScript
         wp_localize_script('ga4-to-nutshell-integration', 'ga4ToNutshellSettings', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('ga4-to-nutshell-frontend-nonce'),
             'mappings' => isset($this->settings['form_user_mappings']) ? $this->settings['form_user_mappings'] : [],
             'debug' => isset($this->settings['debug_mode']) && $this->settings['debug_mode'] ? true : false,
+            'eventTriggers' => $event_triggers
         ]);
     }
 
+    // ADD these additional form processing methods:
+
     /**
-     * Process Ninja Form submission (server-side option)
+     * Process Contact Form 7 submission
      */
+    public function process_cf7_submission($contact_form)
+    {
+        ga4_to_nutshell_log('Contact Form 7 submission received', $contact_form->id());
+
+        // Get form data
+        $submission = WPCF7_Submission::get_instance();
+
+        if (!$submission) {
+            ga4_to_nutshell_log('No submission instance found', null, 'error');
+            return;
+        }
+
+        $form_data = $submission->get_posted_data();
+        $form_id = $contact_form->id();
+        $form_title = $contact_form->title();
+
+        // Get form URL
+        $current_url = $submission->get_meta('url');
+        $referrer = $submission->get_meta('referer');
+
+        ga4_to_nutshell_log('Extracted CF7 form data', [
+            'form_id' => $form_id,
+            'form_title' => $form_title,
+            'fields' => array_keys($form_data)
+        ]);
+
+        // Find assigned user
+        $assigned_user_id = '';
+        if (isset($this->settings['form_user_mappings']) && is_array($this->settings['form_user_mappings'])) {
+            foreach ($this->settings['form_user_mappings'] as $mapping) {
+                if ($mapping['form_id'] == $form_id) {
+                    $assigned_user_id = $mapping['user_id'];
+                    break;
+                }
+            }
+        }
+
+        // Determine traffic source
+        $traffic_source = '';
+        if (!empty($referrer)) {
+            $parsed_url = parse_url($referrer);
+            if (isset($parsed_url['host'])) {
+                $traffic_source = $parsed_url['host'];
+            }
+        }
+
+        // Process the submission
+        if (function_exists('ga4_to_nutshell_send_to_nutshell')) {
+            $result = ga4_to_nutshell_send_to_nutshell(
+                $this->settings,
+                $form_data,
+                $form_title,
+                $assigned_user_id,
+                $traffic_source,
+                $referrer,
+                $current_url,
+                $form_id
+            );
+
+            if (is_wp_error($result)) {
+                ga4_to_nutshell_log('Error sending CF7 data to Nutshell', $result->get_error_message(), 'error');
+            } else {
+                ga4_to_nutshell_log('Successfully sent CF7 data to Nutshell', ['lead_id' => $result]);
+            }
+        }
+    }
+
+    /**
+     * Process Gravity Form submission
+     */
+    public function process_gravity_form_submission($entry, $form)
+    {
+        ga4_to_nutshell_log('Gravity Form submission received', [
+            'form_id' => $form['id'],
+            'form_title' => $form['title']
+        ]);
+
+        $form_id = $form['id'];
+        $form_title = $form['title'];
+
+        // Extract field values
+        $form_data = [];
+
+        foreach ($form['fields'] as $field) {
+            if (!empty($field['inputs']) && is_array($field['inputs'])) {
+                // Handle fields with multiple inputs (like name, address)
+                foreach ($field['inputs'] as $input) {
+                    $input_id = $input['id'];
+                    $input_value = rgar($entry, $input_id);
+
+                    if (!empty($input_value)) {
+                        $input_label = $input['label'];
+                        $form_data[$input_label] = $input_value;
+                        $form_data['input_' . str_replace('.', '_', $input_id)] = $input_value;
+                    }
+                }
+            } else {
+                // Standard fields
+                $field_id = $field['id'];
+                $field_value = rgar($entry, $field_id);
+
+                if (!empty($field_value)) {
+                    $field_label = $field['label'];
+                    $form_data[$field_label] = $field_value;
+                    $form_data['field_' . $field_id] = $field_value;
+                }
+            }
+        }
+
+        // Get URL info
+        $current_url = GFFormsModel::get_current_page_url();
+        $referrer = isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : '';
+
+        // Find assigned user
+        $assigned_user_id = '';
+        if (isset($this->settings['form_user_mappings']) && is_array($this->settings['form_user_mappings'])) {
+            foreach ($this->settings['form_user_mappings'] as $mapping) {
+                if ($mapping['form_id'] == $form_id) {
+                    $assigned_user_id = $mapping['user_id'];
+                    break;
+                }
+            }
+        }
+
+        // Determine traffic source
+        $traffic_source = '';
+        if (!empty($referrer)) {
+            $parsed_url = parse_url($referrer);
+            if (isset($parsed_url['host'])) {
+                $traffic_source = $parsed_url['host'];
+            }
+        }
+
+        // Process the submission
+        if (function_exists('ga4_to_nutshell_send_to_nutshell')) {
+            $result = ga4_to_nutshell_send_to_nutshell(
+                $this->settings,
+                $form_data,
+                $form_title,
+                $assigned_user_id,
+                $traffic_source,
+                $referrer,
+                $current_url,
+                $form_id
+            );
+
+            if (is_wp_error($result)) {
+                ga4_to_nutshell_log('Error sending Gravity Form data to Nutshell', $result->get_error_message(), 'error');
+            } else {
+                ga4_to_nutshell_log('Successfully sent Gravity Form data to Nutshell', ['lead_id' => $result]);
+            }
+        }
+    }
+
+    /**
+     * Process WPForms submission
+     */
+    public function process_wpforms_submission($fields, $entry, $form_data, $entry_id)
+    {
+        ga4_to_nutshell_log('WPForms submission received', [
+            'form_id' => $form_data['id'],
+            'form_title' => $form_data['settings']['form_title']
+        ]);
+
+        $form_id = $form_data['id'];
+        $form_title = $form_data['settings']['form_title'];
+
+        // Format form data
+        $formatted_form_data = [];
+
+        foreach ($fields as $field) {
+            $field_id = $field['id'];
+            $field_label = $field['name'];
+            $field_value = $field['value'];
+
+            $formatted_form_data[$field_label] = $field_value;
+            $formatted_form_data['field_' . $field_id] = $field_value;
+        }
+
+        // Get URL info
+        $current_url = isset($_SERVER['HTTP_HOST']) && isset($_SERVER['REQUEST_URI'])
+            ? (is_ssl() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']
+            : '';
+        $referrer = isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : '';
+
+        // Find assigned user
+        $assigned_user_id = '';
+        if (isset($this->settings['form_user_mappings']) && is_array($this->settings['form_user_mappings'])) {
+            foreach ($this->settings['form_user_mappings'] as $mapping) {
+                if ($mapping['form_id'] == $form_id) {
+                    $assigned_user_id = $mapping['user_id'];
+                    break;
+                }
+            }
+        }
+
+        // Determine traffic source
+        $traffic_source = '';
+        if (!empty($referrer)) {
+            $parsed_url = parse_url($referrer);
+            if (isset($parsed_url['host'])) {
+                $traffic_source = $parsed_url['host'];
+            }
+        }
+
+        // Process the submission
+        if (function_exists('ga4_to_nutshell_send_to_nutshell')) {
+            $result = ga4_to_nutshell_send_to_nutshell(
+                $this->settings,
+                $formatted_form_data,
+                $form_title,
+                $assigned_user_id,
+                $traffic_source,
+                $referrer,
+                $current_url,
+                $form_id
+            );
+
+            if (is_wp_error($result)) {
+                ga4_to_nutshell_log('Error sending WPForms data to Nutshell', $result->get_error_message(), 'error');
+            } else {
+                ga4_to_nutshell_log('Successfully sent WPForms data to Nutshell', ['lead_id' => $result]);
+            }
+        }
+    }
+
+    /**
+     * Process Formidable Forms submission
+     */
+    public function process_formidable_submission($entry_id, $form_id)
+    {
+        ga4_to_nutshell_log('Formidable Forms submission received', [
+            'entry_id' => $entry_id,
+            'form_id' => $form_id
+        ]);
+
+        // Get form information
+        $form = FrmForm::getOne($form_id);
+        $form_title = $form->name;
+
+        // Get form data
+        $entry = FrmEntry::getOne($entry_id, true);
+        $form_data = [];
+
+        if (!empty($entry->metas)) {
+            foreach ($entry->metas as $field_id => $value) {
+                $field = FrmField::getOne($field_id);
+
+                if ($field) {
+                    $form_data[$field->name] = $value;
+                    $form_data['field_' . $field_id] = $value;
+                }
+            }
+        }
+
+        // Get URL info
+        $current_url = isset($_SERVER['HTTP_HOST']) && isset($_SERVER['REQUEST_URI'])
+            ? (is_ssl() ? 'https://' : 'http://') . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']
+            : '';
+        $referrer = isset($_SERVER['HTTP_REFERER']) ? $_SERVER['HTTP_REFERER'] : '';
+
+        // Find assigned user
+        $assigned_user_id = '';
+        if (isset($this->settings['form_user_mappings']) && is_array($this->settings['form_user_mappings'])) {
+            foreach ($this->settings['form_user_mappings'] as $mapping) {
+                if ($mapping['form_id'] == $form_id) {
+                    $assigned_user_id = $mapping['user_id'];
+                    break;
+                }
+            }
+        }
+
+        // Determine traffic source
+        $traffic_source = '';
+        if (!empty($referrer)) {
+            $parsed_url = parse_url($referrer);
+            if (isset($parsed_url['host'])) {
+                $traffic_source = $parsed_url['host'];
+            }
+        }
+
+        // Process the submission
+        if (function_exists('ga4_to_nutshell_send_to_nutshell')) {
+            $result = ga4_to_nutshell_send_to_nutshell(
+                $this->settings,
+                $form_data,
+                $form_title,
+                $assigned_user_id,
+                $traffic_source,
+                $referrer,
+                $current_url,
+                $form_id
+            );
+
+            if (is_wp_error($result)) {
+                ga4_to_nutshell_log('Error sending Formidable Forms data to Nutshell', $result->get_error_message(), 'error');
+            } else {
+                ga4_to_nutshell_log('Successfully sent Formidable Forms data to Nutshell', ['lead_id' => $result]);
+            }
+        }
+    }
+
+    /** Process Ninja Form submission (server-side option) */
     // public function process_ninja_form_submission($form_data)
     // {
     //     // This is an optional server-side handler for Ninja Forms submissions
@@ -516,6 +1080,7 @@ class GA4_To_Nutshell
     //         error_log('GA4 to Nutshell: ga4_to_nutshell_send_to_nutshell function not found');
     //     }
     // }
+
     /**
      * Process Ninja Form submission directly
      * Completely rewritten to properly extract field data
@@ -562,7 +1127,7 @@ class GA4_To_Nutshell
                 $field_value = isset($field['value']) ? $field['value'] : '';
 
                 $extracted_fields[$field_id] = $field_value;
-                $extracted_fields[$field_key] = $field_value; // Store by both ID and key for better matching
+                $extracted_fields[$field_key] = $field_value;  // Store by both ID and key for better matching
 
                 ga4_to_nutshell_log('Extracted field', [
                     'field_id' => $field_id,
@@ -619,6 +1184,7 @@ class GA4_To_Nutshell
             ga4_to_nutshell_log('Function ga4_to_nutshell_send_to_nutshell not found', null, 'error');
         }
     }
+
     /**
      * Process AJAX data - For the JS integration path
      */
@@ -697,6 +1263,7 @@ class GA4_To_Nutshell
             wp_send_json_error(['message' => 'Internal error: Function not found']);
         }
     }
+
     /**
      * AJAX: Get Nutshell users
      */
@@ -810,7 +1377,7 @@ class GA4_To_Nutshell
             return;
         }
 
-        // According to Nutshell API documentation, we'll use the "findUsers" method 
+        // According to Nutshell API documentation, we'll use the "findUsers" method
         // to test connectivity - this is a safe read-only operation
         $api_url = 'https://app.nutshell.com/api/v1/json';
         $payload = [
@@ -912,4 +1479,5 @@ function ga4_to_nutshell_init()
 {
     GA4_To_Nutshell::get_instance();
 }
+
 add_action('plugins_loaded', 'ga4_to_nutshell_init');
