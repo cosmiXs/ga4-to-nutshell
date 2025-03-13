@@ -4,7 +4,7 @@
  * Plugin Name: GA4 to Nutshell CRM Integration
  * Plugin URI: https://plusinfinit.com
  * Description: Integrates GA4 datalayer events with Nutshell CRM, focusing on Ninja Forms submissions.
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: cosmixs
  * Author URI: https://plusinfinit.com
  * Text Domain: ga4-to-nutshell
