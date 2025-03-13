@@ -264,6 +264,121 @@ function ga4_to_nutshell_find_or_create_account($api_url, $username, $api_key, $
     return $new_account_id;
 }
 /**
+ * Detect the form type based on form ID and data
+ * This helps with better field detection and mapping
+ *
+ * @param string $form_id The form ID
+ * @param array $form_data The form data
+ * @return string The detected form type or empty string if unknown
+ */
+function ga4_to_nutshell_detect_form_type($form_id, $form_data)
+{
+    ga4_to_nutshell_log('Detecting form type', [
+        'form_id' => $form_id,
+        'form_data_keys' => array_keys($form_data)
+    ]);
+
+    // Check settings to see if form type is already mapped
+    $settings = get_option('ga4_to_nutshell_settings', []);
+    if (isset($settings['form_user_mappings']) && is_array($settings['form_user_mappings'])) {
+        foreach ($settings['form_user_mappings'] as $mapping) {
+            if ($mapping['form_id'] == $form_id && !empty($mapping['form_type'])) {
+                ga4_to_nutshell_log('Found form type in mappings', ['form_type' => $mapping['form_type']]);
+                return $mapping['form_type'];
+            }
+        }
+    }
+
+    // Look for form plugin-specific patterns in the form data
+
+    // Check for Ninja Forms patterns
+    $ninja_forms_pattern = false;
+    foreach (array_keys($form_data) as $key) {
+        if (
+            strpos($key, 'ninja_forms') !== false ||
+            strpos($key, 'nf_') !== false ||
+            preg_match('/^field_\d+$/', $key)
+        ) {
+            $ninja_forms_pattern = true;
+            break;
+        }
+    }
+
+    if ($ninja_forms_pattern) {
+        ga4_to_nutshell_log('Detected Ninja Forms pattern in form data', null);
+        return 'ninja_forms';
+    }
+
+    // Check for Contact Form 7 patterns
+    $cf7_pattern = false;
+    foreach (array_keys($form_data) as $key) {
+        if (
+            strpos($key, 'your-') === 0 ||
+            strpos($key, 'wpcf7') !== false
+        ) {
+            $cf7_pattern = true;
+            break;
+        }
+    }
+
+    if ($cf7_pattern) {
+        ga4_to_nutshell_log('Detected Contact Form 7 pattern in form data', null);
+        return 'contact_form_7';
+    }
+
+    // Check for Gravity Forms patterns
+    $gf_pattern = false;
+    foreach (array_keys($form_data) as $key) {
+        if (
+            strpos($key, 'input_') === 0 ||
+            strpos($key, 'gform_') !== false
+        ) {
+            $gf_pattern = true;
+            break;
+        }
+    }
+
+    if ($gf_pattern) {
+        ga4_to_nutshell_log('Detected Gravity Forms pattern in form data', null);
+        return 'gravity_forms';
+    }
+
+    // Check for WPForms patterns
+    $wpforms_pattern = false;
+    foreach (array_keys($form_data) as $key) {
+        if (strpos($key, 'wpforms') !== false) {
+            $wpforms_pattern = true;
+            break;
+        }
+    }
+
+    if ($wpforms_pattern) {
+        ga4_to_nutshell_log('Detected WPForms pattern in form data', null);
+        return 'wpforms';
+    }
+
+    // Check for Formidable patterns
+    $formidable_pattern = false;
+    foreach (array_keys($form_data) as $key) {
+        if (
+            strpos($key, 'item_meta') !== false ||
+            strpos($key, 'frm_') !== false
+        ) {
+            $formidable_pattern = true;
+            break;
+        }
+    }
+
+    if ($formidable_pattern) {
+        ga4_to_nutshell_log('Detected Formidable Forms pattern in form data', null);
+        return 'formidable';
+    }
+
+    // If we can't detect a specific form type, return empty string
+    ga4_to_nutshell_log('Could not detect form type from form data', null, 'warning');
+    return '';
+}
+/**
  * Enhanced function to send data to Nutshell CRM
  * This version properly creates and links contacts, accounts, and leads
  *
