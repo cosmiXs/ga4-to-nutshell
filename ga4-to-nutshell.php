@@ -120,7 +120,7 @@ class GA4_To_Nutshell
             case 'ninja_forms':
                 if (class_exists('Ninja_Forms')) {
                     add_action('ninja_forms_after_submission', [$this, 'process_ninja_form_submission'], 10, 1);
-                    ga4_to_nutshell_log('Added Ninja Forms integration hooks', null, 'info');
+                    //ga4_to_nutshell_log('Added Ninja Forms integration hooks', null, 'info');
                 }
                 break;
 
