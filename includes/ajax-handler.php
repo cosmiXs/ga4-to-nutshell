@@ -8,13 +8,20 @@
 add_action('wp_ajax_ga4_to_nutshell_process_data', 'ga4_to_nutshell_process_data');
 add_action('wp_ajax_nopriv_ga4_to_nutshell_process_data', 'ga4_to_nutshell_process_data');
 
+
 /**
  * Process data from frontend and send to Nutshell
+ * Enhanced with better error handling and debugging
  */
 function ga4_to_nutshell_process_data()
 {
     // Start logging
-    ga4_to_nutshell_log('Processing data from frontend', $_POST, 'info');
+    ga4_to_nutshell_log('------- STARTING NEW REQUEST -------', null, 'info');
+    ga4_to_nutshell_log('Processing data from frontend', [
+        'request_method' => $_SERVER['REQUEST_METHOD'],
+        'content_type' => isset($_SERVER['CONTENT_TYPE']) ? $_SERVER['CONTENT_TYPE'] : 'not set',
+        'post_keys' => array_keys($_POST)
+    ], 'info');
 
     // Verify nonce
     if (!isset($_POST['nonce']) || !wp_verify_nonce($_POST['nonce'], 'ga4-to-nutshell-frontend-nonce')) {
@@ -24,26 +31,43 @@ function ga4_to_nutshell_process_data()
     }
 
     // Get submitted data
-    $json_data = isset($_POST['data']) ? sanitize_text_field($_POST['data']) : '';
+    $json_data = isset($_POST['data']) ? $_POST['data'] : '';
     if (empty($json_data)) {
         ga4_to_nutshell_log('No data provided', $_POST, 'error');
         wp_send_json_error(['message' => 'No data provided']);
         return;
     }
 
+    // Don't use sanitize_text_field on potentially large JSON data
+    // as it can truncate the data. We'll sanitize individual fields instead.
+    
     // Decode JSON data
     $data = json_decode(stripslashes($json_data), true);
     if (!$data) {
-        ga4_to_nutshell_log('Invalid JSON data', $json_data, 'error');
-        wp_send_json_error(['message' => 'Invalid JSON data']);
+        $json_error = json_last_error_msg();
+        ga4_to_nutshell_log('Invalid JSON data', [
+            'error' => $json_error,
+            'data_excerpt' => substr($json_data, 0, 100) . '...'
+        ], 'error');
+        wp_send_json_error(['message' => 'Invalid JSON data: ' . $json_error]);
         return;
     }
 
-    ga4_to_nutshell_log('JSON data decoded successfully', $data, 'info');
+    ga4_to_nutshell_log('JSON data decoded successfully', [
+        'form_id' => isset($data['formId']) ? $data['formId'] : 'not set',
+        'form_name' => isset($data['formName']) ? $data['formName'] : 'not set',
+        'has_form_data' => isset($data['formData']) ? 'yes' : 'no',
+        'field_count' => isset($data['formData']) ? count($data['formData']) : 0
+    ], 'info');
 
     // Get settings
     $settings = get_option('ga4_to_nutshell_settings', []);
-    ga4_to_nutshell_log('Loaded settings', $settings, 'info');
+    ga4_to_nutshell_log('Loaded settings', [
+        'has_username' => !empty($settings['nutshell_username']) ? 'yes' : 'no',
+        'has_api_key' => !empty($settings['nutshell_api_key']) ? 'yes' : 'no',
+        'debug_mode' => !empty($settings['debug_mode']) ? 'yes' : 'no',
+        'mapping_count' => isset($settings['form_user_mappings']) ? count($settings['form_user_mappings']) : 0
+    ], 'info');
 
     // Check for API credentials
     if (empty($settings['nutshell_username']) || empty($settings['nutshell_api_key'])) {
@@ -52,46 +76,183 @@ function ga4_to_nutshell_process_data()
         return;
     }
 
-    // Extract data
+    // Extract data with proper sanitization
     $form_data = isset($data['formData']) ? $data['formData'] : [];
     $form_id = isset($data['formId']) ? sanitize_text_field($data['formId']) : '';
     $form_name = isset($data['formName']) ? sanitize_text_field($data['formName']) : '';
+    $form_type = isset($data['formType']) ? sanitize_text_field($data['formType']) : '';
     $traffic_source = isset($data['trafficSource']) ? sanitize_text_field($data['trafficSource']) : '';
+    $traffic_medium = isset($data['trafficMedium']) ? sanitize_text_field($data['trafficMedium']) : '';
     $referrer_url = isset($data['referrerUrl']) ? esc_url_raw($data['referrerUrl']) : '';
     $current_url = isset($data['currentUrl']) ? esc_url_raw($data['currentUrl']) : '';
     $assigned_user_id = isset($data['assignedUserId']) ? sanitize_text_field($data['assignedUserId']) : '';
 
-    ga4_to_nutshell_log('Extracted data from request', [
-        'form_data' => $form_data,
+    // Sanitize form data individually (avoid truncating large fields)
+    $sanitized_form_data = [];
+    foreach ($form_data as $key => $value) {
+        // Skip empty values
+        if (empty($value)) {
+            continue;
+        }
+        
+        // Handle different value types
+        if (is_array($value)) {
+            $sanitized_form_data[$key] = array_map('sanitize_text_field', $value);
+        } else {
+            // For text values, use wp_kses to preserve more formatting
+            $sanitized_form_data[$key] = wp_kses($value, [
+                'a' => ['href' => [], 'title' => []],
+                'br' => [],
+                'em' => [],
+                'strong' => []
+            ]);
+        }
+    }
+
+    ga4_to_nutshell_log('Extracted and sanitized data', [
         'form_id' => $form_id,
         'form_name' => $form_name,
+        'form_type' => $form_type,
         'traffic_source' => $traffic_source,
-        'referrer_url' => $referrer_url,
-        'current_url' => $current_url,
-        'assigned_user_id' => $assigned_user_id
+        'traffic_medium' => $traffic_medium,
+        'field_count' => count($sanitized_form_data),
+        'has_assigned_user' => !empty($assigned_user_id) ? 'yes' : 'no'
     ], 'info');
 
     // Send data to Nutshell
     $result = ga4_to_nutshell_send_to_nutshell(
         $settings,
-        $form_data,
+        $sanitized_form_data,
         $form_name,
         $assigned_user_id,
         $traffic_source,
+        $traffic_medium,  // Added traffic_medium parameter
         $referrer_url,
         $current_url,
-        $form_id  // Added form_id parameter
+        $form_id,
+        $form_type
     );
 
     if (is_wp_error($result)) {
-        ga4_to_nutshell_log('Error sending data to Nutshell', $result->get_error_message(), 'error');
-        wp_send_json_error(['message' => $result->get_error_message()]);
+        ga4_to_nutshell_log('Error sending data to Nutshell', [
+            'error_message' => $result->get_error_message(),
+            'error_code' => $result->get_error_code(),
+            'form_id' => $form_id
+        ], 'error');
+        wp_send_json_error([
+            'message' => $result->get_error_message(),
+            'code' => $result->get_error_code()
+        ]);
         return;
     }
 
-    ga4_to_nutshell_log('Data sent to Nutshell successfully', ['lead_id' => $result], 'info');
-    wp_send_json_success(['message' => 'Data sent to Nutshell successfully', 'lead_id' => $result]);
+    ga4_to_nutshell_log('Data sent to Nutshell successfully', [
+        'lead_id' => $result,
+        'form_id' => $form_id,
+        'form_name' => $form_name
+    ], 'info');
+    wp_send_json_success([
+        'message' => 'Data sent to Nutshell successfully',
+        'lead_id' => $result
+    ]);
 }
+/**
+ * Find or create a contact in Nutshell
+ */
+function ga4_to_nutshell_find_or_create_contact($api_url, $username, $api_key, $contact) {
+    // Try to find contact by email
+    $find_payload = [
+        'jsonrpc' => '2.0',
+        'method' => 'searchContacts',
+        'params' => [
+            'string' => $contact['email'],
+            'limit' => 1
+        ],
+        'id' => wp_generate_uuid4()
+    ];
+    
+    $args = [
+        'headers' => [
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Basic ' . base64_encode($username . ':' . $api_key)
+        ],
+        'body' => json_encode($find_payload),
+        'timeout' => 30,
+        'method' => 'POST'
+    ];
+    
+    $response = wp_remote_request($api_url, $args);
+    
+    if (is_wp_error($response)) {
+        return new WP_Error('api_error', 'Error connecting to Nutshell API: ' . $response->get_error_message());
+    }
+    
+    $response_body = json_decode(wp_remote_retrieve_body($response), true);
+    
+    // If contact found, return ID
+    if (!empty($response_body['result']) && count($response_body['result']) > 0) {
+        return $response_body['result'][0]['id'];
+    }
+    
+    // Create new contact
+    $create_payload = [
+        'jsonrpc' => '2.0',
+        'method' => 'newContact',
+        'params' => [
+            'contact' => [
+                'name' => $contact['name'],
+                'email' => [
+                    [
+                        'emailAddress' => $contact['email']
+                    ]
+                ]
+            ]
+        ],
+        'id' => wp_generate_uuid4()
+    ];
+    
+    // Add phone if available
+    if (!empty($contact['phone'])) {
+        $create_payload['params']['contact']['phone'] = [
+            [
+                'phoneNumber' => $contact['phone']
+            ]
+        ];
+    }
+    
+    // Add country if available
+    if (!empty($contact['country'])) {
+        $create_payload['params']['contact']['address'] = [
+            'country' => $contact['country']
+        ];
+    }
+    
+    $args = [
+        'headers' => [
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Basic ' . base64_encode($username . ':' . $api_key)
+        ],
+        'body' => json_encode($create_payload),
+        'timeout' => 30,
+        'method' => 'POST'
+    ];
+    
+    $response = wp_remote_request($api_url, $args);
+    
+    if (is_wp_error($response)) {
+        return new WP_Error('api_error', 'Error connecting to Nutshell API: ' . $response->get_error_message());
+    }
+    
+    $response_body = json_decode(wp_remote_retrieve_body($response), true);
+    
+    if (isset($response_body['error'])) {
+        return new WP_Error('api_error', 'Nutshell API error: ' . $response_body['error']['message']);
+    }
+    
+    return $response_body['result']['id'];
+}
+
+
 /**
  * Updated function to find or create an account (company) in Nutshell
  * This function uses the correct JSON-RPC API structure
@@ -377,6 +538,161 @@ function ga4_to_nutshell_detect_form_type($form_id, $form_data)
     // If we can't detect a specific form type, return empty string
     ga4_to_nutshell_log('Could not detect form type from form data', null, 'warning');
     return '';
+}
+/**
+ * Extract company information from form data
+ * This function analyzes form data to identify company-related fields
+ *
+ * @param array $form_data The form data
+ * @param string $form_id The form ID (optional)
+ * @param string $form_type The form type (optional)
+ * @return array|null Company data array or null if no valid company data found
+ */
+function ga4_to_nutshell_extract_company_from_form_data($form_data, $form_id = '', $form_type = '')
+{
+    ga4_to_nutshell_log('Extracting company info from form data', [
+        'form_data_keys' => array_keys($form_data),
+        'form_id' => $form_id,
+        'form_type' => $form_type
+    ]);
+
+    // Initialize company with empty values
+    $company = [
+        'name' => '',
+        'website' => '',
+        'industry' => '',
+        'address' => '',
+        'city' => '',
+        'state' => '',
+        'postal_code' => '',
+        'country' => '',
+        'phone' => ''
+    ];
+
+    // Direct mapping for standard field names
+    foreach ($company as $field => $value) {
+        if (isset($form_data[$field]) && !empty($form_data[$field])) {
+            $company[$field] = sanitize_text_field($form_data[$field]);
+            ga4_to_nutshell_log("Found direct company match for {$field}", [
+                'value' => $company[$field]
+            ]);
+        }
+    }
+
+    // Try different patterns for company fields if we don't have a company name yet
+    if (empty($company['name'])) {
+        // Check for common company field patterns
+        $company_patterns = [
+            'name' => ['company', 'company_name', 'business', 'organization', 'organisation', 'employer', 'company-name', 'business-name', 'your-company'],
+            'website' => ['website', 'company_website', 'business_website', 'url', 'web', 'site', 'your-website'],
+            'industry' => ['industry', 'sector', 'company_industry', 'business_type', 'your-industry'],
+            'phone' => ['company_phone', 'business_phone', 'work_phone', 'office_phone'],
+            'address' => ['company_address', 'business_address', 'office_address', 'work_address'],
+            'city' => ['company_city', 'business_city', 'work_city'],
+            'state' => ['company_state', 'business_state', 'work_state'],
+            'postal_code' => ['company_zip', 'business_zip', 'company_postal', 'work_zip'],
+            'country' => ['company_country', 'business_country', 'work_country']
+        ];
+
+        foreach ($company_patterns as $field => $patterns) {
+            // Skip if we already have this field
+            if (!empty($company[$field])) {
+                continue;
+            }
+
+            foreach ($form_data as $key => $value) {
+                if (empty($value)) {
+                    continue;
+                }
+
+                $key_lower = strtolower($key);
+                foreach ($patterns as $pattern) {
+                    if (strpos($key_lower, $pattern) !== false) {
+                        $company[$field] = sanitize_text_field($value);
+                        ga4_to_nutshell_log("Found company {$field} using pattern", [
+                            'pattern' => $pattern,
+                            'field_key' => $key,
+                            'value' => $company[$field]
+                        ]);
+                        break 2; // Break out of both loops
+                    }
+                }
+            }
+        }
+    }
+
+    // If the 'company' field exists in form data but not in our patterns, try to use that
+    if (empty($company['name']) && isset($form_data['company']) && !empty($form_data['company'])) {
+        $company['name'] = sanitize_text_field($form_data['company']);
+        ga4_to_nutshell_log("Using 'company' field directly for company name", [
+            'value' => $company['name']
+        ]);
+    }
+
+    // Special case for organization name variations
+    if (empty($company['name'])) {
+        foreach ($form_data as $key => $value) {
+            if (empty($value)) {
+                continue;
+            }
+
+            $key_lower = strtolower($key);
+            if (
+                strpos($key_lower, 'org') !== false ||
+                strpos($key_lower, 'company') !== false ||
+                strpos($key_lower, 'business') !== false ||
+                strpos($key_lower, 'employer') !== false ||
+                (strpos($key_lower, 'work') !== false && strpos($key_lower, 'place') !== false)
+            ) {
+                $company['name'] = sanitize_text_field($value);
+                ga4_to_nutshell_log("Found company name using extended patterns", [
+                    'field_key' => $key,
+                    'value' => $company['name']
+                ]);
+                break;
+            }
+        }
+    }
+
+    // Extract from domain name if we have an email but no company
+    if (empty($company['name']) && !empty($form_data['email'])) {
+        $email = $form_data['email'];
+        $email_parts = explode('@', $email);
+        
+        if (count($email_parts) === 2) {
+            $domain = $email_parts[1];
+            // Skip common email providers that are unlikely to be company names
+            $common_providers = ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'aol.com', 'icloud.com', 'mail.com', 'protonmail.com'];
+            
+            if (!in_array($domain, $common_providers)) {
+                // Strip common TLDs
+                $domain_parts = explode('.', $domain);
+                if (count($domain_parts) >= 2) {
+                    // Use domain without TLD as company name
+                    $company_from_domain = $domain_parts[count($domain_parts) - 2];
+                    // Capitalize the first letter of each word
+                    $company['name'] = ucwords(str_replace(['-', '.'], ' ', $company_from_domain));
+                    
+                    ga4_to_nutshell_log("Extracted company name from email domain", [
+                        'email' => $email,
+                        'domain' => $domain,
+                        'company_name' => $company['name']
+                    ]);
+                }
+            }
+        }
+    }
+
+    // Log and return the company info
+    ga4_to_nutshell_log('Final company info extraction results', $company);
+
+    // If we have at least a company name, return the company info
+    if (!empty($company['name'])) {
+        return $company;
+    }
+
+    ga4_to_nutshell_log('No valid company data found in form data', null, 'debug');
+    return null;
 }
 /**
  * Enhanced function to send data to Nutshell CRM
@@ -1192,7 +1508,7 @@ function ga4_to_nutshell_extract_contact_from_form_data($form_data, $form_id = '
 
             // Pattern detection method - expanded with more patterns
             $field_patterns = [
-                'email' => ['email', 'e-mail', 'mail', 'email_address', 'your-email', 'user_email', 'contact_email'],
+                'email' => ['email', 'e-mail', 'mail', 'email_address', 'your-email', 'user_email', 'contact_email', 'business_email'],
                 'name' => ['name', 'full_name', 'fullname', 'customer_name', 'client_name', 'your-name', 'user_name', 'contact_name'],
                 'phone' => ['phone', 'telephone', 'tel', 'mobile', 'phone_number', 'your-phone', 'user_phone', 'contact_phone', 'cell', 'work_phone'],
                 'company' => ['company', 'business', 'organization', 'organisation', 'company_name', 'employer', 'your-company'],

@@ -284,12 +284,39 @@ function ga4_to_nutshell_log($message, $data = null, $level = 'info') {
     // Format data if provided
     if ($data !== null) {
         if (is_array($data) || is_object($data)) {
-            // Limit large data dumps for better readability
-            $data_string = print_r($data, true);
-            
-            // If data is very large, truncate it
-            if (strlen($data_string) > 2000 && !$debug_mode) {
-                $data_string = substr($data_string, 0, 2000) . '... [truncated]';
+            // Check if it's Ninja Forms data structure and simplify it
+            if (is_array($data) && 
+                (strpos($message, 'Ninja Form') !== false || 
+                 strpos($message, 'ninja_form') !== false || 
+                 isset($data['response']) && isset($data['response']['data']) && isset($data['response']['data']['form_id']))) {
+                
+                // For Ninja Forms, only log essential data
+                $simplified_data = array();
+                
+                // Log form ID if available
+                if (isset($data['form_id'])) {
+                    $simplified_data['form_id'] = $data['form_id'];
+                } elseif (isset($data['response']) && isset($data['response']['data']) && isset($data['response']['data']['form_id'])) {
+                    $simplified_data['form_id'] = $data['response']['data']['form_id'];
+                }
+                
+                // Log field count instead of all fields
+                if (isset($data['fields']) && is_array($data['fields'])) {
+                    $simplified_data['field_count'] = count($data['fields']);
+                    $simplified_data['field_keys'] = array_keys($data['fields']);
+                } elseif (isset($data['response']) && isset($data['response']['data']) && isset($data['response']['data']['fields'])) {
+                    $simplified_data['field_count'] = count($data['response']['data']['fields']);
+                }
+                
+                $data_string = '[Ninja Forms data simplified] ' . print_r($simplified_data, true);
+            } else {
+                // For other arrays/objects, limit size
+                $data_string = print_r($data, true);
+                
+                // Truncate large data
+                if (strlen($data_string) > 1000) {
+                    $data_string = substr($data_string, 0, 1000) . '... [truncated]';
+                }
             }
             
             $formatted_message .= ' ' . $data_string;

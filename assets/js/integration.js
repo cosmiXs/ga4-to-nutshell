@@ -130,28 +130,46 @@
     }
 
     /**
-     * Setup Ninja Forms specific listeners
-     */
+      * Setup Ninja Forms specific listeners
+      * 
+      * Prioritizing the nfRadio approach for better stability and to avoid duplication
+      */
     function setupNinjaFormsListeners() {
-        // Check if nfRadio is available (Ninja Forms 3+)
+        // Store a flag to avoid double-processing the same submission
+        window._ga4ToNutshellProcessedForms = window._ga4ToNutshellProcessedForms || {};
+
+        // The preferred approach - using nfRadio (Ninja Forms 3+)
         if (typeof nfRadio !== "undefined") {
-            log("Using nfRadio for Ninja Forms");
+            log("Using nfRadio for Ninja Forms (preferred method)");
 
             nfRadio.channel("forms").on("submit:response", function (response) {
-                log("Ninja Forms submission via nfRadio", response);
+                log("Ninja Forms submission via nfRadio", {
+                    form_id: response?.data?.form_id || 'unknown',
+                    field_count: response?.data?.fields?.length || 0
+                });
 
                 if (response && response.data && response.data.form_id) {
                     const formId = response.data.form_id;
 
-                    // Check if we've already processed this form submission
+                    // Create a unique submission ID
                     const submissionId = "ninja_" + formId + "_" + Date.now();
-                    if (processedForms.has(submissionId)) {
+
+                    // Check if we've already processed this submission
+                    if (processedForms.has(submissionId) ||
+                        window._ga4ToNutshellProcessedForms[formId]) {
                         log("Ignoring duplicate Ninja Forms submission", submissionId);
                         return;
                     }
 
+                    // Mark as processed
                     processedForms.add(submissionId);
-                    setTimeout(() => processedForms.delete(submissionId), 5000); // Clear after 5 seconds
+                    window._ga4ToNutshellProcessedForms[formId] = true;
+
+                    // Clean up after 5 seconds
+                    setTimeout(() => {
+                        processedForms.delete(submissionId);
+                        window._ga4ToNutshellProcessedForms[formId] = false;
+                    }, 5000);
 
                     const formData = extractNinjaFormsData(response);
                     const formName = "Ninja Form " + formId;
@@ -160,24 +178,41 @@
                     dispatchFormEvent(formId, formName, formData, "ninja_forms");
                 }
             });
+
+            // No need for the document event listener if nfRadio is available
+            return;
         }
 
-        // Also listen for the document event (alternative approach)
+        // Fallback approach - only use if nfRadio is not available
+        log("nfRadio not found, using DOM event listener as fallback");
+
         document.addEventListener("nfFormSubmitResponse", function (event) {
-            log("Ninja Forms submission via DOM event", event);
+            log("Ninja Forms submission via DOM event (fallback method)", {
+                form_id: event?.detail?.response?.data?.form_id || 'unknown'
+            });
 
             if (event.detail && event.detail.response && event.detail.response.data) {
                 const formId = event.detail.response.data.form_id;
 
-                // Check if we've already processed this form submission
+                // Create a unique submission ID
                 const submissionId = "ninja_" + formId + "_" + Date.now();
-                if (processedForms.has(submissionId)) {
+
+                // Check if we've already processed this submission
+                if (processedForms.has(submissionId) ||
+                    window._ga4ToNutshellProcessedForms[formId]) {
                     log("Ignoring duplicate Ninja Forms submission", submissionId);
                     return;
                 }
 
+                // Mark as processed
                 processedForms.add(submissionId);
-                setTimeout(() => processedForms.delete(submissionId), 5000); // Clear after 5 seconds
+                window._ga4ToNutshellProcessedForms[formId] = true;
+
+                // Clean up after 5 seconds
+                setTimeout(() => {
+                    processedForms.delete(submissionId);
+                    window._ga4ToNutshellProcessedForms[formId] = false;
+                }, 5000);
 
                 const formData = extractNinjaFormsData(event.detail);
                 const formName = "Ninja Form " + formId;
