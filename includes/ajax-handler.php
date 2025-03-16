@@ -201,9 +201,9 @@ function ga4_to_nutshell_find_or_create_contact($api_url, $username, $api_key, $
         'params' => [
             'contact' => [
                 'name' => $contact['name'],
-                'email' => [
+                'emails' => [
                     [
-                        'emailAddress' => $contact['email']
+                        'address' => $contact['email']
                     ]
                 ]
             ]
@@ -695,6 +695,57 @@ function ga4_to_nutshell_extract_company_from_form_data($form_data, $form_id = '
     return null;
 }
 /**
+ * Fetch available lead sources from Nutshell API
+ */
+function ga4_to_nutshell_get_lead_sources($api_url, $username, $api_key) {
+    $request = [
+        'method' => 'findSources',
+        'params' => [],
+        'id' => 1
+    ];
+    
+    $response = wp_remote_post($api_url, [
+        'body' => json_encode($request),
+        'headers' => [
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Basic ' . base64_encode($username . ':' . $api_key)
+        ]
+    ]);
+
+    if (is_wp_error($response)) {
+        return ['Website']; // Return default if request fails
+    }
+
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+    return $body['result'] ?? ['Website']; // Return valid sources or default
+}
+/**
+ * Fetch available custom fields from Nutshell API
+ */
+function ga4_to_nutshell_get_custom_fields($api_url, $username, $api_key) {
+    $request = [
+        'method' => 'findCustomFields',
+        'params' => [],
+        'id' => 1
+    ];
+
+    $response = wp_remote_post($api_url, [
+        'body' => json_encode($request),
+        'headers' => [
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Basic ' . base64_encode($username . ':' . $api_key)
+        ]
+    ]);
+
+    if (is_wp_error($response)) {
+        return []; // Return empty if request fails
+    }
+
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+    return array_column($body['result'], 'name'); // Return list of field names
+}
+
+/**
  * Enhanced function to send data to Nutshell CRM
  * This version properly creates and links contacts, accounts, and leads
  *
@@ -846,8 +897,14 @@ function ga4_to_nutshell_send_to_nutshell($settings, $form_data, $form_name, $as
     $valid_sources = [];
     $traffic_details = '';
 
-    // Add Website as a default source
-    $valid_sources[] = 'Website';
+    // Fetch valid sources from Nutshell API before assigning
+    $valid_sources = ga4_to_nutshell_get_lead_sources($api_url, $username, $api_key);
+
+    if (in_array($traffic_source, $valid_sources)) {
+        $lead_data['sources'] = [$traffic_source];
+    } else {
+        $lead_data['sources'] = ['Website']; // Default to "Website" if invalid
+    }
 
     // Process traffic medium - THIS IS THE KEY ADDITION
     if (!empty($traffic_medium)) {
@@ -950,12 +1007,14 @@ function ga4_to_nutshell_send_to_nutshell($settings, $form_data, $form_name, $as
     // Add form fields to custom fields for additional context
     $lead_data['customFields'] = [];
     
-    // Add traffic data to custom fields for analytics
-    if (!empty($traffic_source)) {
+    // Check if "Traffic Source" and "Traffic Medium" exist in Nutshell's custom fields
+    $available_custom_fields = ga4_to_nutshell_get_custom_fields($api_url, $username, $api_key);
+
+    if (in_array('Traffic Source', $available_custom_fields)) {
         $lead_data['customFields']['Traffic Source'] = substr($traffic_source, 0, 255);
     }
-    
-    if (!empty($traffic_medium)) {
+
+    if (in_array('Traffic Medium', $available_custom_fields)) {
         $lead_data['customFields']['Traffic Medium'] = substr($traffic_medium, 0, 255);
     }
     
