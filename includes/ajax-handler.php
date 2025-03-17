@@ -201,10 +201,8 @@ function ga4_to_nutshell_find_or_create_contact($api_url, $username, $api_key, $
         'params' => [
             'contact' => [
                 'name' => $contact['name'],
-                'emails' => [
-                    [
-                        'address' => $contact['email']
-                    ]
+                'email' => [
+                        $contact['email']
                 ]
             ]
         ],
@@ -214,9 +212,7 @@ function ga4_to_nutshell_find_or_create_contact($api_url, $username, $api_key, $
     // Add phone if available
     if (!empty($contact['phone'])) {
         $create_payload['params']['contact']['phone'] = [
-            [
-                'phoneNumber' => $contact['phone']
-            ]
+            $contact['phone']
         ];
     }
     
