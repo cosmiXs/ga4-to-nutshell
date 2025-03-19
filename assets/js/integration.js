@@ -130,13 +130,14 @@
     }
 
     /**
-      * Setup Ninja Forms specific listeners
-      * 
-      * Prioritizing the nfRadio approach for better stability and to avoid duplication
-      */
+     * Setup Ninja Forms specific listeners
+     *
+     * Prioritizing the nfRadio approach for better stability and to avoid duplication
+     */
     function setupNinjaFormsListeners() {
         // Store a flag to avoid double-processing the same submission
-        window._ga4ToNutshellProcessedForms = window._ga4ToNutshellProcessedForms || {};
+        window._ga4ToNutshellProcessedForms =
+            window._ga4ToNutshellProcessedForms || {};
 
         // The preferred approach - using nfRadio (Ninja Forms 3+)
         if (typeof nfRadio !== "undefined") {
@@ -144,8 +145,8 @@
 
             nfRadio.channel("forms").on("submit:response", function (response) {
                 log("Ninja Forms submission via nfRadio", {
-                    form_id: response?.data?.form_id || 'unknown',
-                    field_count: response?.data?.fields?.length || 0
+                    form_id: response?.data?.form_id || "unknown",
+                    field_count: response?.data?.fields?.length || 0,
                 });
 
                 if (response && response.data && response.data.form_id) {
@@ -155,8 +156,10 @@
                     const submissionId = "ninja_" + formId + "_" + Date.now();
 
                     // Check if we've already processed this submission
-                    if (processedForms.has(submissionId) ||
-                        window._ga4ToNutshellProcessedForms[formId]) {
+                    if (
+                        processedForms.has(submissionId) ||
+                        window._ga4ToNutshellProcessedForms[formId]
+                    ) {
                         log("Ignoring duplicate Ninja Forms submission", submissionId);
                         return;
                     }
@@ -188,7 +191,7 @@
 
         document.addEventListener("nfFormSubmitResponse", function (event) {
             log("Ninja Forms submission via DOM event (fallback method)", {
-                form_id: event?.detail?.response?.data?.form_id || 'unknown'
+                form_id: event?.detail?.response?.data?.form_id || "unknown",
             });
 
             if (event.detail && event.detail.response && event.detail.response.data) {
@@ -198,8 +201,10 @@
                 const submissionId = "ninja_" + formId + "_" + Date.now();
 
                 // Check if we've already processed this submission
-                if (processedForms.has(submissionId) ||
-                    window._ga4ToNutshellProcessedForms[formId]) {
+                if (
+                    processedForms.has(submissionId) ||
+                    window._ga4ToNutshellProcessedForms[formId]
+                ) {
                     log("Ignoring duplicate Ninja Forms submission", submissionId);
                     return;
                 }
@@ -443,7 +448,15 @@
             const formType = event.formType || event.form_type || "generic";
 
             // Send to Nutshell
-            sendToNutshell(formId, formName, formData, formType);
+            processFormData(
+                formData,
+                formId,
+                formName,
+                formType,
+                trafficSource,
+                referrerUrl,
+                currentUrl
+            );
         }
     }
 
@@ -470,7 +483,15 @@
         const formName = event.formName || event.form_name || "Demo Form " + formId;
 
         // Send to Nutshell
-        sendToNutshell(formId, formName, formData, formType);
+        processFormData(
+            formData,
+            formId,
+            formName,
+            formType,
+            trafficSource,
+            referrerUrl,
+            currentUrl
+        );
     }
 
     /**
@@ -629,10 +650,10 @@
         const referrerUrl = document.referrer;
 
         // First, send data directly to Nutshell
-        sendToNutshell(
+        processFormData(
+            formData,
             formId,
             formName,
-            formData,
             formType,
             trafficSource,
             referrerUrl,
@@ -855,17 +876,24 @@
             medium = "direct";
         }
 
-        // For backwards compatibility, return both the source string and an object with source and medium
-        const result = source;
+        // For backwards compatibility, return an object that can be used as a string
+        const result = new String(source);
 
-        // Add medium property to the string (won't affect string usage)
+        // Add medium property to the string object
         Object.defineProperty(result, "medium", {
             value: medium,
             enumerable: false,
         });
 
         log("Final traffic source and medium", { source, medium });
-        return result;
+        // Return an object with both source and medium
+        return {
+            source: source,
+            medium: medium,
+            toString: function () {
+                return source;
+            },
+        };
     }
 
     /**
@@ -876,96 +904,101 @@
         formData,
         formId,
         formName,
+        formType, // Add formType parameter
         trafficSource,
         referrerUrl,
         currentUrl
     ) {
-        // Find the assigned user based on form ID
-        const assignedUserId = formMappings[formId] || null;
+        // Find assigned user based on form ID - updated to array structure
+        let assignedUserId = "";
+        if (formMappings && Array.isArray(formMappings)) {
+            for (let i = 0; i < formMappings.length; i++) {
+                if (formMappings[i].form_id == formId) {
+                    assignedUserId = formMappings[i].user_id;
+                    log("Found user mapping for form", {
+                        formId: formId,
+                        userId: assignedUserId,
+                    });
+                    break;
+                }
+            }
+        }
 
         // Get medium if available (from the enhanced traffic source)
-        const trafficMedium = trafficSource.medium || "";
+        let medium = "";
+        if (
+            trafficSource &&
+            typeof trafficSource === "object" &&
+            trafficSource.medium
+        ) {
+            medium = trafficSource.medium;
+        } else if (typeof trafficSource === "string" && trafficSource.medium) {
+            // Handle case where trafficSource is a string with medium property
+            medium = trafficSource.medium;
+        }
 
-        // Prepare data for Nutshell
-        const nutshellData = {
+        // Prepare the data to send
+        const dataToSend = {
             formData: formData,
             formId: formId,
             formName: formName,
-            trafficSource: trafficSource, // This is still a string for backwards compatibility
-            trafficMedium: trafficMedium, // New medium parameter
+            formType: formType,
+            trafficSource:
+                typeof trafficSource === "object"
+                    ? trafficSource.source
+                    : trafficSource,
+            trafficMedium: medium,
             referrerUrl: referrerUrl,
             currentUrl: currentUrl,
             assignedUserId: assignedUserId,
         };
 
-        log("Preparing data for Nutshell", nutshellData);
+        log("Preparing data for Nutshell", dataToSend);
 
-        // Send data to Nutshell via AJAX
-        sendToNutshell(nutshellData);
+        // Call the updated sendToNutshell function
+        sendToAjax(dataToSend);
     }
-    /**
-     * Add a new function to directly capture Ninja Form submissions
-     * This is a more direct approach than relying on the dataLayer
-     */
-    function setupNinjaFormListeners() {
-        log("Setting up Ninja Forms listeners");
 
-        // Check if Ninja Forms is present
-        if (typeof Ninja_Forms !== "undefined") {
-            log("Ninja Forms object found, adding submission listener");
-
-            // When Ninja Forms is done rendering all forms, add our listener
-            $(document).on("nfFormReady", function (e, formData) {
-                log("Ninja Forms ready event", formData);
-
-                // Listen for form submissions
-                $(document).on("nfFormSubmitResponse", function (e, response) {
-                    log("Ninja Forms submission event", response);
-
-                    if (response && response.form_id) {
-                        const formId = response.form_id;
-                        let formName = "Ninja Form " + formId;
-
-                        // Extract fields
-                        const formData = {};
-
-                        if (response.fields && Array.isArray(response.fields)) {
-                            response.fields.forEach(function (field) {
-                                if (field.id && field.value !== undefined) {
-                                    formData[field.id] = field.value;
-                                }
-                            });
-                        }
-
-                        log("Captured Ninja Form submission", {
-                            formId,
-                            formName,
-                            formData,
-                        });
-
-                        // Get traffic source and medium
-                        const trafficSource = getTrafficSource();
-                        const trafficMedium = trafficSource.medium || "";
-                        const currentUrl = window.location.href;
-                        const referrerUrl = document.referrer;
-
-                        // Create and dispatch book_a_demo event
-                        window.dataLayer.push({
-                            event: "book_a_demo",
-                            formId: formId,
-                            formName: formName,
-                            formData: formData,
-                            trafficSource: trafficSource,
-                            trafficMedium: trafficMedium, // Added medium
-                            currentUrl: currentUrl,
-                            referrerUrl: referrerUrl,
-                        });
-                    }
-                });
-            });
-        } else {
-            log("Ninja Forms not found on page", null, "warning");
+    // New function to handle the AJAX part separately
+    function sendToAjax(dataToSend) {
+        // Check if we have the required settings
+        if (
+            typeof ga4ToNutshellSettings === "undefined" ||
+            !ga4ToNutshellSettings.ajaxUrl
+        ) {
+            log(
+                "Missing ga4ToNutshellSettings, cannot send to Nutshell",
+                null,
+                "error"
+            );
+            return;
         }
+
+        log("Sending data to Nutshell", dataToSend);
+
+        // Create form data for AJAX request
+        const ajaxFormData = new FormData();
+        ajaxFormData.append("action", "ga4_to_nutshell_process_data");
+        ajaxFormData.append("nonce", ga4ToNutshellSettings.nonce);
+        ajaxFormData.append("data", JSON.stringify(dataToSend));
+
+        // Send AJAX request
+        fetch(ga4ToNutshellSettings.ajaxUrl, {
+            method: "POST",
+            body: ajaxFormData,
+            credentials: "same-origin",
+        })
+            .then((response) => response.json())
+            .then((response) => {
+                if (response.success) {
+                    log("Successfully sent data to Nutshell", response.data);
+                } else {
+                    log("Error sending data to Nutshell", response.data, "error");
+                }
+            })
+            .catch((error) => {
+                log("Failed to send data to Nutshell", error.message, "error");
+            });
     }
     /**
      * Logging function
