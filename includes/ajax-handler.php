@@ -269,14 +269,11 @@ function ga4_to_nutshell_find_or_create_account($api_url, $username, $api_key, $
 
     ga4_to_nutshell_log('Finding or creating account', ['company_name' => $company_name]);
 
-    // Try to find account by name
     $find_payload = [
         'jsonrpc' => '2.0',
         'method' => 'findAccounts',
         'params' => [
-            'query' => [
-                'name' => $company_name
-            ],
+            'string' => $company_name,  // Use string parameter instead
             'limit' => 1
         ],
         'id' => wp_generate_uuid4()
@@ -577,6 +574,7 @@ function ga4_to_nutshell_extract_company_from_form_data($form_data, $form_id = '
 
     // Try different patterns for company fields if we don't have a company name yet
     if (empty($company['name'])) {
+        
         // Check for common company field patterns
         $company_patterns = [
             'name' => ['company', 'company_name', 'business', 'organization', 'organisation', 'employer', 'company-name', 'business-name', 'your-company'],
@@ -591,6 +589,7 @@ function ga4_to_nutshell_extract_company_from_form_data($form_data, $form_id = '
         ];
 
         foreach ($company_patterns as $field => $patterns) {
+            
             // Skip if we already have this field
             if (!empty($company[$field])) {
                 continue;
@@ -604,7 +603,11 @@ function ga4_to_nutshell_extract_company_from_form_data($form_data, $form_id = '
                 $key_lower = strtolower($key);
                 foreach ($patterns as $pattern) {
                     if (strpos($key_lower, $pattern) !== false) {
+                        if ($field === 'name' && strpos($key_lower, 'email') !== false && is_email($value)) {
+                            continue; // Skip using email addresses as company names
+                        }
                         $company[$field] = sanitize_text_field($value);
+                        
                         ga4_to_nutshell_log("Found company {$field} using pattern", [
                             'pattern' => $pattern,
                             'field_key' => $key,
@@ -1013,13 +1016,16 @@ function ga4_to_nutshell_send_to_nutshell($settings, $form_data, $form_name, $as
     if (in_array('Traffic Medium', $available_custom_fields)) {
         $lead_data['customFields']['Traffic Medium'] = substr($traffic_medium, 0, 255);
     }
-    
-    // Add other form fields as custom fields
+    // Only include fields that are actually custom fields in Nutshell
+    $available_custom_fields = ga4_to_nutshell_get_custom_fields($api_url, $username, $api_key);
     foreach ($form_data as $key => $value) {
         if (is_string($value) && !empty($value)) {
-            // Limit key length to 40 characters (Nutshell limit)
-            $customFieldKey = substr("Form: " . $key, 0, 40);
-            $lead_data['customFields'][$customFieldKey] = substr($value, 0, 255); // Limit value length
+            // Create a more descriptive field name
+            $field_name = "Form Field " . $key;
+            // Check if this field exists in Nutshell
+            if (in_array($field_name, $available_custom_fields)) {
+                $lead_data['customFields'][$field_name] = substr($value, 0, 255);
+            }
         }
     }
 
