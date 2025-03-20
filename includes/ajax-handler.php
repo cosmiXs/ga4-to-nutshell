@@ -740,6 +740,34 @@ function ga4_to_nutshell_get_custom_fields($api_url, $username, $api_key) {
     $body = json_decode(wp_remote_retrieve_body($response), true);
     return array_column($body['result'], 'name'); // Return list of field names
 }
+/**
+ * Create a new custom field in Nutshell
+ */
+function ga4_to_nutshell_create_custom_field($api_url, $username, $api_key, $field_name) {
+    $request = [
+        'method' => 'newCustomField',
+        'params' => [
+            'name' => $field_name,
+            'type' => 'string' // Use correct type (string, number, etc.)
+        ],
+        'id' => 1
+    ];
+
+    $response = wp_remote_post($api_url, [
+        'body' => json_encode($request),
+        'headers' => [
+            'Content-Type' => 'application/json',
+            'Authorization' => 'Basic ' . base64_encode($username . ':' . $api_key)
+        ]
+    ]);
+
+    if (is_wp_error($response)) {
+        return false; // Field creation failed
+    }
+
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+    return isset($body['result']['id']); // Return true if field created successfully
+}
 
 /**
  * Enhanced function to send data to Nutshell CRM
@@ -1006,6 +1034,15 @@ function ga4_to_nutshell_send_to_nutshell($settings, $form_data, $form_name, $as
     // Check if "Traffic Source" and "Traffic Medium" exist in Nutshell's custom fields
     $available_custom_fields = ga4_to_nutshell_get_custom_fields($api_url, $username, $api_key);
 
+    // Only assign "Form: name" if it exists in Nutshell
+    if (!in_array('Form: name', $available_custom_fields)) {
+        // Try creating the field
+        if (ga4_to_nutshell_create_custom_field($api_url, $username, $api_key, 'Form: name')) {
+            $lead_data['customFields']['Form: name'] = substr($form_name, 0, 255);
+        }
+    }
+
+    // Assign traffic data if the fields exist
     if (in_array('Traffic Source', $available_custom_fields)) {
         $lead_data['customFields']['Traffic Source'] = substr($traffic_source, 0, 255);
     }
