@@ -648,6 +648,10 @@ function ga4_to_nutshell_extract_company_from_form_data($form_data, $form_id = '
                 strpos($key_lower, 'employer') !== false ||
                 (strpos($key_lower, 'work') !== false && strpos($key_lower, 'place') !== false)
             ) {
+                
+            if (strpos($key_lower, 'email') !== false || filter_var($value, FILTER_VALIDATE_EMAIL)) {
+                continue; // Skip email fields as company
+            }
                 $company['name'] = sanitize_text_field($value);
                 ga4_to_nutshell_log("Found company name using extended patterns", [
                     'field_key' => $key,

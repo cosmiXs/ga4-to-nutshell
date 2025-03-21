@@ -144,10 +144,14 @@
             log("Using nfRadio for Ninja Forms (preferred method)");
 
             nfRadio.channel("forms").on("submit:response", function (response) {
-        // Prevent dispatching if 'book_a_demo' is not in allowed triggers
-        if (!eventTriggers.includes("book_a_demo")) {
-            log("Skipping Ninja Forms submission: 'book_a_demo' not in eventTriggers");
+        console.log("🧪 DEBUG: Checking eventTriggers before dispatching form...");
+        if (typeof eventTriggers === "undefined") {
+            console.warn("⚠️ eventTriggers is undefined!");
+        } else if (!eventTriggers.includes("book_a_demo")) {
+            console.log("⛔ Skipping submission: 'book_a_demo' not in eventTriggers:", eventTriggers);
             return;
+        } else {
+            console.log("✅ 'book_a_demo' found in eventTriggers:", eventTriggers);
         }
 
                 log("Ninja Forms submission via nfRadio", {
