@@ -144,6 +144,12 @@
             log("Using nfRadio for Ninja Forms (preferred method)");
 
             nfRadio.channel("forms").on("submit:response", function (response) {
+        // Prevent dispatching if 'book_a_demo' is not in allowed triggers
+        if (!eventTriggers.includes("book_a_demo")) {
+            log("Skipping Ninja Forms submission: 'book_a_demo' not in eventTriggers");
+            return;
+        }
+
                 log("Ninja Forms submission via nfRadio", {
                     form_id: response?.data?.form_id || "unknown",
                     field_count: response?.data?.fields?.length || 0,
@@ -448,6 +454,12 @@
             const formType = event.formType || event.form_type || "generic";
 
             // Send to Nutshell
+            // Clean up invalid company values (e.g. fallback from email)
+    if (formData.company && formData.company.includes && formData.company.includes("@")) {
+        console.warn("Ignoring invalid company name (email used as company):", formData.company);
+        formData.company = "";
+    }
+
             processFormData(
                 formData,
                 formId,
@@ -483,6 +495,12 @@
         const formName = event.formName || event.form_name || "Demo Form " + formId;
 
         // Send to Nutshell
+        // Clean up invalid company values (e.g. fallback from email)
+    if (formData.company && formData.company.includes && formData.company.includes("@")) {
+        console.warn("Ignoring invalid company name (email used as company):", formData.company);
+        formData.company = "";
+    }
+
         processFormData(
             formData,
             formId,
@@ -650,6 +668,12 @@
         const referrerUrl = document.referrer;
 
         // First, send data directly to Nutshell
+        // Clean up invalid company values (e.g. fallback from email)
+    if (formData.company && formData.company.includes && formData.company.includes("@")) {
+        console.warn("Ignoring invalid company name (email used as company):", formData.company);
+        formData.company = "";
+    }
+
         processFormData(
             formData,
             formId,

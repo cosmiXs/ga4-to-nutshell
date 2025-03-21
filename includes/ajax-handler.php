@@ -15,6 +15,11 @@ add_action('wp_ajax_nopriv_ga4_to_nutshell_process_data', 'ga4_to_nutshell_proce
  */
 function ga4_to_nutshell_process_data()
 {
+    // Ensure this only processes valid submissions
+    if (empty($_POST['data'])) {
+        wp_send_json_error(['message' => 'Empty data received']);
+    }
+    
     // Start logging
     ga4_to_nutshell_log('------- STARTING NEW REQUEST -------', null, 'info');
     ga4_to_nutshell_log('Processing data from frontend', [
@@ -47,7 +52,7 @@ function ga4_to_nutshell_process_data()
         $json_error = json_last_error_msg();
         ga4_to_nutshell_log('Invalid JSON data', [
             'error' => $json_error,
-            'data_excerpt' => substr($json_data, 0, 100) . '...'
+            'data_excerpt' => substr($json_data, 0, 10000) . '...'
         ], 'error');
         wp_send_json_error(['message' => 'Invalid JSON data: ' . $json_error]);
         return;

@@ -1481,3 +1481,15 @@ function ga4_to_nutshell_init()
 }
 
 add_action('plugins_loaded', 'ga4_to_nutshell_init');
+
+// Step 3: Check for existing open lead (for this contact and account)
+$existing_lead = $nutshell_api->find_open_lead([
+    'contact_id' => $contact_id,
+    'account_id' => $account_id,
+]);
+
+if ($existing_lead) {
+    // Update existing lead with a note
+    $nutshell_api->add_note_to_lead($existing_lead['id'], $form_data_note);
+    wp_send_json_success(['message' => 'Updated existing lead', 'lead_id' => $existing_lead['id']]);
+}

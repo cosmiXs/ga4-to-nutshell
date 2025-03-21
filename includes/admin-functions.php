@@ -179,16 +179,6 @@ function ga4_to_nutshell_admin_notices() {
 add_action('admin_notices', 'ga4_to_nutshell_admin_notices');
 
 /**
- * Add a settings link to the plugin list
- */
-function ga4_to_nutshell_add_settings_link($links) {
-    $settings_link = '<a href="options-general.php?page=ga4-to-nutshell">' . __('Settings', 'ga4-to-nutshell') . '</a>';
-    array_unshift($links, $settings_link);
-    return $links;
-}
-add_filter('plugin_action_links_ga4-to-nutshell/ga4-to-nutshell.php', 'ga4_to_nutshell_add_settings_link');
-
-/**
  * Display a help tab on the settings page
  */
 function ga4_to_nutshell_add_help_tab() {
@@ -314,8 +304,8 @@ function ga4_to_nutshell_log($message, $data = null, $level = 'info') {
                 $data_string = print_r($data, true);
                 
                 // Truncate large data
-                if (strlen($data_string) > 1000) {
-                    $data_string = substr($data_string, 0, 1000) . '... [truncated]';
+                if (strlen($data_string) > 10000) {
+                    $data_string = substr($data_string, 0, 10000) . '... [truncated]';
                 }
             }
             
