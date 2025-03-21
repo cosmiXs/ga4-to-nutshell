@@ -1721,10 +1721,26 @@ function ga4_to_nutshell_extract_contact_from_form_data($form_data, $form_id = '
         }
     }
 
-    // If no name found, use email as name
-    if (empty($contact['name']) && !empty($contact['email'])) {
-        $contact['name'] = $contact['email'];
-        ga4_to_nutshell_log('No name found, using email as name', $contact['name']);
+   
+    if (!empty($first_name) && !empty($last_name)) {
+        $contact['name'] = trim($first_name . ' ' . $last_name);
+
+        ga4_to_nutshell_log('First + Last Name found, using it', $contact['name']);
+    } elseif (!empty($form_data['full_name'])) {
+        $contact['name'] = trim($form_data['full_name']);
+
+        ga4_to_nutshell_log('Full Name found, using full_name', $contact['name']);
+    } elseif (!empty($form_data['name'])) {
+        $contact['name'] = trim($form_data['name']);
+        ga4_to_nutshell_log('Name found, using name', $contact['name']);
+    } elseif (!empty($first_name)) {
+        $contact['name'] = trim($first_name);
+
+        ga4_to_nutshell_log('No name found, using first name', $contact['name']);
+    } else {
+        $contact['name'] = ''; // fallback safely, do NOT use email
+
+        ga4_to_nutshell_log('No name found', $contact['name']);
     }
 
     // Log and return the contact info
