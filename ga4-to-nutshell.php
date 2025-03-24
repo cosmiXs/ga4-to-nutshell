@@ -364,7 +364,7 @@ class GA4_To_Nutshell
         echo '</div>';
 
         // Template for field mapping table
-        ?>
+?>
         <script type="text/template" id="field-mapping-template">
             <table class="widefat field-mapping-table">
                 <thead>
@@ -390,7 +390,7 @@ class GA4_To_Nutshell
                 </tbody>
             </table>
         </script>
-        <?php
+    <?php
     }
 
     /**
@@ -444,7 +444,7 @@ class GA4_To_Nutshell
         echo '<button type="button" class="button" id="ga4-to-nutshell-add-mapping">' . __('Add Mapping', 'ga4-to-nutshell') . '</button>';
 
         // Add template for mapping UI
-        ?>
+    ?>
         <script type="text/template" id="form-mapping-template">
             <table class="widefat form-mapping-table">
                 <thead>
@@ -484,7 +484,7 @@ class GA4_To_Nutshell
                 </tbody>
             </table>
         </script>
-        <?php
+<?php
     }
 
     /**
@@ -676,14 +676,38 @@ class GA4_To_Nutshell
             GA4_TO_NUTSHELL_VERSION,
             true
         );
+        $form_user_mappings = get_option('ga4_nutshell_user_mapping', []);
+        $field_mappings     = get_option('ga4_nutshell_field_mappings', []);
+        $base_settings      = $this->settings;
 
+        //error_log(print_r($base_settings,true));
+        $settings = is_array($base_settings) ? $base_settings : [];
+
+        error_log(print_r($settings,true));
+        // $settings['form_user_mappings'] = array_map(function ($form_id, $user_id) {
+        //     return [
+        //         'form_id' => $form_id,
+        //         'user_id' => $user_id,
+        //     ];
+        // }, array_keys($form_user_mappings), $form_user_mappings);
+        // error_log(json_encode($settings));
+        // $settings['field_mappings'] = array_reduce(array_keys($field_mappings), function ($carry, $form_id) use ($field_mappings) {
+        //     foreach ($field_mappings[$form_id] as $nutshell_key => $form_field_id) {
+        //         $carry[] = [
+        //             'form_id' => $form_id,
+        //             'nutshell_field' => $nutshell_key,
+        //             'form_field_id' => $form_field_id,
+        //         ];
+        //     }
+        //     return $carry;
+        // }, []);
+        error_log(print_r($settings['form_user_mappings'],true));
         wp_localize_script('ga4-to-nutshell-admin', 'ga4ToNutshell', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
-            'nonce' => wp_create_nonce('ga4-to-nutshell-nonce'),
-            'settings' => $this->settings,
+            'nonce'   => wp_create_nonce('ga4_to_nutshell_nonce'),
+            'settings' => $settings,
         ]);
     }
-
     /**
      * Enqueue frontend scripts
      */
@@ -1481,15 +1505,3 @@ function ga4_to_nutshell_init()
 }
 
 add_action('plugins_loaded', 'ga4_to_nutshell_init');
-
-// Step 3: Check for existing open lead (for this contact and account)
-$existing_lead = $nutshell_api->find_open_lead([
-    'contact_id' => $contact_id,
-    'account_id' => $account_id,
-]);
-
-if ($existing_lead) {
-    // Update existing lead with a note
-    $nutshell_api->add_note_to_lead($existing_lead['id'], $form_data_note);
-    wp_send_json_success(['message' => 'Updated existing lead', 'lead_id' => $existing_lead['id']]);
-}

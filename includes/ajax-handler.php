@@ -1,5 +1,4 @@
 <?php
-
 /**
  * AJAX Handler for GA4 to Nutshell WordPress Plugin
  */
@@ -652,6 +651,10 @@ function ga4_to_nutshell_extract_company_from_form_data($form_data, $form_id = '
             if (strpos($key_lower, 'email') !== false || filter_var($value, FILTER_VALIDATE_EMAIL)) {
                 continue; // Skip email fields as company
             }
+                
+        if (strpos($key_lower, 'email') !== false || filter_var($value, FILTER_VALIDATE_EMAIL)) {
+            continue;
+        }
                 $company['name'] = sanitize_text_field($value);
                 ga4_to_nutshell_log("Found company name using extended patterns", [
                     'field_key' => $key,
@@ -899,7 +902,8 @@ function ga4_to_nutshell_send_to_nutshell($settings, $form_data, $form_name, $as
     // Using the correct JSON-RPC structure for leads
     $lead_data = [
         'description' => 'Website form lead: ' . esc_html($form_name),
-        'confidence' => 50, // Medium confidence
+        'confidence' => 50,
+    'assignedTo' => [['id' => (int) $assigned_user_id]], // Medium confidence
         'note' => [
             "Lead created from " . esc_html($form_name) . " form submission.",
             "Traffic source: " . esc_html($traffic_source),
@@ -1076,15 +1080,15 @@ function ga4_to_nutshell_send_to_nutshell($settings, $form_data, $form_name, $as
     }
 
     // Assign to user if specified - FIXED FIELD NAME
-    if (!empty($assigned_user_id)) {
-        $lead_data['assignedTo'] = [
-            'entityType' => 'Users',
-            'id' => $assigned_user_id
-        ];
-        ga4_to_nutshell_log('Assigning lead to user ID', ['user_id' => $assigned_user_id]);
-    } else {
-        ga4_to_nutshell_log('No user assigned for this lead', null, 'warning');
-    }
+    // if (!empty($assigned_user_id)) {
+    //     $lead_data['assignedTo'] = [
+    //         'entityType' => 'Users',
+    //         'id' => $assigned_user_id
+    //     ];
+    //     ga4_to_nutshell_log('Assigning lead to user ID', ['user_id' => $assigned_user_id]);
+    // } else {
+    //     ga4_to_nutshell_log('No user assigned for this lead', null, 'warning');
+    // }
 
     // Remove any assignee field if it exists, as we're using assignedTo
     if (isset($lead_data['assignee'])) {
@@ -1528,6 +1532,17 @@ function ga4_to_nutshell_extract_contact_from_form_data($form_data, $form_id = '
         'postal_code' => '',
         'country' => ''
     ];
+
+    // Assign contact name from form
+    if (!empty($form_data['full_name'])) {
+        $contact['name'] = trim($form_data['full_name']);
+    } elseif (!empty($form_data['name'])) {
+        $contact['name'] = trim($form_data['name']);
+    } elseif (!empty($form_data['first_name']) && !empty($form_data['last_name'])) {
+        $contact['name'] = trim($form_data['first_name'] . ' ' . $form_data['last_name']);
+    } elseif (!empty($form_data['first_name'])) {
+        $contact['name'] = trim($form_data['first_name']);
+    }
 
     // IMPORTANT: Direct mapping for standard field names
     // If the form data already contains keys that match our contact fields, use them directly
